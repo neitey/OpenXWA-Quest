@@ -461,6 +461,10 @@ static void android_load_settings(void) {
 				  "# The edges of the view are shaded in coarser blocks; HUD, panels and text\n"
 				  "# are not affected (restart to change):\n"
 				  "#XWA_XR_FOVEATION=low\n"
+				  "# Steam Frame: Valve's own foveation, which follows the eyes: off (ours\n"
+				  "# above does the fixed foveation), fixed (Valve's, without eye\n"
+				  "# tracking) or eye (Valve's, eye-tracked):\n"
+				  "#XWA_XR_FRAME_FOVEATION=off\n"
 				  "# GPU/CPU clock floor requested from the headset: 0, low, high, boost:\n"
 				  "#AERON_XR_PERF_LEVEL=high\n"
 				  "# 0 = turn off the GPU optimizations (A/B test; also in the VR options):\n"
@@ -663,9 +667,42 @@ static void shim_frame(void) {
 	}
 }
 
+/* Steam Frame: the Android layer (Lepton) puts Valve's foveation layer
+ * (VK_LAYER_VALVE_fdm_injection, XR_APILAYER_VALVE_fdm_injection) into every
+ * app. It follows the eyes, and where the eye tracking restarts its sharp area
+ * jumps from frame to frame: the picture jitters. XWA_XR_FRAME_FOVEATION:
+ * off (default: the layer told to stay out; the game's own fixed foveation,
+ * XWA_XR_FOVEATION, does the job), fixed (Valve's without the eye tracking),
+ * eye (Valve's as it comes). The layer reads these variables in the game's
+ * process; they are set before anything loads Vulkan or OpenXR. Variables
+ * already set (from the Steam launch options) are kept. Elsewhere they mean
+ * nothing. */
+static void steam_frame_foveation(void) {
+	const char* mode = SDL_getenv("XWA_XR_FRAME_FOVEATION");
+	if (!mode || !mode[0]) {
+		mode = "off";
+	}
+	if (SDL_strcasecmp(mode, "eye") == 0) {
+		Aeron_LogInfo("xwa.config", "Steam Frame foveation: Valve's, eye-tracked");
+		return;
+	}
+	setenv("FDM_DEBUG", "disable_offsets", 0); /* no gaze-driven offsets */
+	if (SDL_strcasecmp(mode, "fixed") != 0) {
+		setenv("FDM", "0", 0);
+		setenv("DISABLE_VULKAN_FDM_INJECTION_LAYER", "1", 0);
+		setenv("DISABLE_XR_APILAYER_VALVE_FDM_INJECTION", "1", 0);
+		setenv("DISABLE_XR_APILAYER_VALVE_fdm_injection", "1", 0);
+	}
+	Aeron_LogInfo("xwa.config", "Steam Frame foveation: %s (FDM_DEBUG=%s, FDM=%s)",
+				  SDL_strcasecmp(mode, "fixed") == 0 ? "Valve's, fixed (no eye tracking)"
+													 : "Valve's off, the game's own fixed foveation",
+				  getenv("FDM_DEBUG") ? getenv("FDM_DEBUG") : "", getenv("FDM") ? getenv("FDM") : "");
+}
+
 /* Read before Aeron_Init: the XR swapchains are sized at session start. */
 static void android_xr_defaults(void) {
 	const char* profile = SDL_getenv("XWA_QUEST_PROFILE");
+	steam_frame_foveation();
 	if (profile && profile[0] == '0') {
 		return;
 	}
