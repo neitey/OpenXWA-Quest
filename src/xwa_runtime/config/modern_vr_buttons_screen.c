@@ -34,7 +34,7 @@
 enum { PAGE_OVERVIEW, PAGE_PICK, PAGE_BY_FUNCTION, PAGE_CAPTURE, PAGE_REPLACE, PAGE_PRESETS };
 
 /* Button ids for hover state (g_buttonHoverState has 256). */
-enum { ID_SLOT_BASE = 100, ID_FN_BASE = 140, ID_CANCEL = 230, ID_REPLACE = 231 };
+enum { ID_SLOT_BASE = 100, ID_FN_BASE = 140, ID_CANCEL = 230, ID_REPLACE = 231 }; /* rows: 234..243 */
 
 #define CAPTURE_TIMEOUT_MS 5000u
 
@@ -460,7 +460,7 @@ int XwaModernVrButtonsScreen_Update(int menu_center_x, int* cursor_row) {
 				"Targeting and weapons only",
 			};
 			for (int p = 0; p < XWA_VR_PRESET_COUNT; ++p) {
-				if (XwaModernOptionsMenu_DrawAction(&menu, XwaVrMap_PresetName(p), 120 + p, 0)) {
+				if (XwaModernOptionsMenu_DrawAction(&menu, XwaVrMap_PresetName(p), 240 + p, 0)) {
 					XwaVrMapping preset;
 					XwaVrMap_PresetMapping(p, &preset);
 					XwaVrMap_Replace(&preset);
@@ -495,7 +495,7 @@ int XwaModernVrButtonsScreen_Update(int menu_center_x, int* cursor_row) {
 		return 0;
 	}
 	uint8_t grip = (uint8_t)m->grip_alt;
-	if (XwaModernOptionsMenu_DrawCycleU8(&menu, &grip, "Make Grip act as Alt", k_grip_alt_texts, 4, 124, 0) &&
+	if (XwaModernOptionsMenu_DrawCycleU8(&menu, &grip, "Make Grip act as Alt", k_grip_alt_texts, 4, 234, 0) &&
 		grip != m->grip_alt) {
 		XwaVrMap_SetGripAlt(grip);
 		bs_save();
@@ -503,19 +503,19 @@ int XwaModernVrButtonsScreen_Update(int menu_center_x, int* cursor_row) {
 				  k_grip_alt_texts[grip], NULL);
 	}
 	menu.y -= 4;
-	if (XwaModernOptionsMenu_DrawAction(&menu, "Assign by Function...", 125, 0)) {
+	if (XwaModernOptionsMenu_DrawAction(&menu, "Assign by Function...", 235, 0)) {
 		s_bs.page = PAGE_BY_FUNCTION;
 		*cursor_row = 0;
 		return 0;
 	}
 	menu.y -= 4;
-	if (XwaModernOptionsMenu_DrawAction(&menu, "Presets...", 126, 0)) {
+	if (XwaModernOptionsMenu_DrawAction(&menu, "Presets...", 236, 0)) {
 		s_bs.page = PAGE_PRESETS;
 		*cursor_row = 0;
 		return 0;
 	}
 	menu.y -= 4;
-	if (XwaModernOptionsMenu_DrawAction(&menu, "Restore Default Buttons", 127, 0)) {
+	if (XwaModernOptionsMenu_DrawAction(&menu, "Restore Default Buttons", 237, 0)) {
 		XwaModernVrButtons_RestoreDefaults();
 		bs_status("Default buttons restored", NULL, NULL);
 	}

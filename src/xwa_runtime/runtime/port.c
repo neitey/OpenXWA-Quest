@@ -317,6 +317,8 @@ static void XwaPort_UpdateVrChord(int enabled) {
  * wheel on a grip work by holding and do nothing here. */
 static void XwaPort_RunVrFunction(AeronXrButton button, int fn) {
 	const XwaVrFunction* f = XwaVrMap_FunctionInfo(fn);
+	Aeron_LogInfo("xwa.vr", "button %s%s: %s", XwaVrButtons_AltHeld() ? "Alt+" : "", XwaVrButtons_ButtonName(button, 1),
+				  f->name);
 	switch (f->kind) {
 		case XWA_VRF_KIND_KEY:
 			if (XwaPort_QueueFlightActionKey(f->key)) {
