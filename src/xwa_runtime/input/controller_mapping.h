@@ -40,6 +40,13 @@ double XwaControllerMapping_XrStickCurveExponent(void);
  * (0..1 of full deflection), then deadzone + (1 - deadzone) * t^exponent,
  * so full deflection stays full. */
 int16_t XwaControllerMapping_XrStickCurve(int16_t value, double deadzone, double exponent);
+/* The steering thumbstick (x, y in SDL range) as one stick: the curve acts
+ * on its deflection (radius, a radial dead zone, the last 5 % of the throw
+ * counts as full) and the direction is kept; the round gate is then
+ * stretched onto the square gate of the joystick the game was made for, so
+ * the axis pushed further gets the curved deflection and a full diagonal is
+ * full pitch and full yaw. exponent 1 = no curve (gate mapping only). */
+void XwaControllerMapping_XrStickRadial(int16_t x, int16_t y, double deadzone, double exponent, int16_t out[2]);
 void XwaControllerMapping_CopySelectedActions(uint16_t actions[XWA_CONTROLLER_ACTION_COUNT]);
 
 /* Pure conversion entry point used by the runtime facade and unit tests. */
