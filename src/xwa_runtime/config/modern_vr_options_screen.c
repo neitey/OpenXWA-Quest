@@ -84,8 +84,8 @@ static const char* const k_hands_texts[] = { "Pilot Gloves", "Controllers", "Off
 static const char* const k_hands_values[] = { "gloves", "controllers", "off" };
 static const char* const k_voice_texts[] = { "Off", "Double-tap Thumb Rest", "Hold Thumb Rest" };
 static const char* const k_voice_values[] = { "0", "doubletap", "hold" };
-static const char* const k_res_texts[] = { "70%", "80%", "90%", "100%", "110% (Recommended)", "120%", "130%", "140%", "150%" };
-static const char* const k_res_values[] = { "0.7", "0.8", "0.9", "1.0", "1.1", "1.2", "1.3", "1.4", "1.5" };
+static const char* const k_res_texts[] = { "70%", "80%", "90%", "100%", "110% (Recommended)", "120%", "125% (Steam Frame panels)", "130%", "140%", "150%" };
+static const char* const k_res_values[] = { "0.7", "0.8", "0.9", "1.0", "1.1", "1.2", "1.25", "1.3", "1.4", "1.5" };
 static const char* const k_fov_texts[] = { "Off", "Low", "Medium", "High" };
 static const char* const k_fov_values[] = { "0", "low", "medium", "high" };
 static const char* const k_env_texts[] = { "Off",
@@ -161,7 +161,7 @@ static const VrSetting k_settings[VR_COUNT] = {
 	/* Ship previews (mission setup, tech room) in stereo on the menu screen:
 	 * always subtle, not in the menu. */
 	{ "XWA_XR_SHIP_3D", "3D Ship Previews", k_depth_texts, k_depth_values, 4, 1, 68, -1 },
-	{ "AERON_XR_RESOLUTION_SCALE", "Resolution (restart)", k_res_texts, k_res_values, 9, 4, 86, 1 },
+	{ "AERON_XR_RESOLUTION_SCALE", "Resolution (restart)", k_res_texts, k_res_values, 10, 4, 86, 1 },
 	{ "AERON_XR_REFRESH_RATE", "Refresh Rate", k_refresh_texts, k_refresh_values, 7, 0, 99, 1 },
 	/* Near-first draw order and the GPU clock floor. */
 	{ "XWA_XR_GPU_OPT", "GPU Optimizations", k_toggle_texts, k_toggle_values, 2, 1, 79, -1 }, /* always on */
