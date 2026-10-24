@@ -179,8 +179,9 @@ static void bs_draw_overview(XwaModernOptionsMenu* menu, int* cursor_row) {
  * each one sits (BY_FUNCTION). */
 static int bs_draw_functions(int top, int bottom, int mark, int places) {
 	const XwaVrMapping* m = XwaVrMap_Current();
-	static const int col_x[3] = { 20, 228, 436 };
-	const int col_w = 200;
+	/* Inside the datapad's frame (about 36 .. 606). */
+	static const int col_x[3] = { 38, 230, 422 };
+	const int col_w = 184;
 	int col = 0, y = top, clicked = -1;
 	for (int g = 0; g < XWA_VRF_GROUP_COUNT; ++g) {
 		int first = 1;
