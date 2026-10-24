@@ -1131,7 +1131,16 @@ int main(int argc, char** argv) {
 #endif
 			/* Before the game reads input: the VR keyboard consumes its clicks. */
 			XwaVrKeyboard_BeginFrame(delta_us);
-			const int xr_unfocused = xr_auto_pause && Aeron_XrIsUnfocused();
+			/* Pauses after a second without focus: the Steam Frame drops
+			 * focus for about half a second now and then (its wear sensor),
+			 * which must not stop the game. Resumes at once. */
+			static int64_t xr_unfocused_us;
+			if (xr_auto_pause && Aeron_XrIsUnfocused()) {
+				xr_unfocused_us += delta_us > 0 ? delta_us : 0;
+			} else {
+				xr_unfocused_us = 0;
+			}
+			const int xr_unfocused = xr_unfocused_us >= 1000000;
 			if (xr_unfocused != xr_paused) {
 				xr_paused = xr_unfocused;
 				Aeron_AudioSetPaused(paused || xr_paused);
