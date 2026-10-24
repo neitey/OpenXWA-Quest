@@ -220,9 +220,10 @@ type app struct {
 	forwardPort int    // port forwarded over USB (0 = none)
 
 	// Wi-Fi (wifi.go, sshtunnel.go).
-	route   string     // usb, usbwifi or wifi (the connection step's choice)
-	netHost string     // the headset's name or IP address over Wi-Fi
-	tunnel  *sshTunnel // Steam Frame through SSH (nil = none)
+	route   string        // usb, usbwifi or wifi (the connection step's choice)
+	netHost string        // the headset's name or IP address over Wi-Fi
+	tunnel  *sshTunnel    // Steam Frame through SSH (nil = none)
+	lib     *frameLibrary // Steam Frame as a Steam Library game (steamlib.go); nil = the adb routes
 }
 
 func newApp() *app {
@@ -252,6 +253,17 @@ func (a *app) run(opts options) int {
 	}
 }
 
+// either picks the Steam Library route's step (a.lib set by connect) or
+// the adb one.
+func (a *app) either(frame, adb func() error) func() error {
+	return func() error {
+		if a.lib != nil {
+			return frame()
+		}
+		return adb()
+	}
+}
+
 type step struct {
 	title string
 	run   func() error
@@ -275,10 +287,10 @@ func (a *app) flow(opts options) error {
 		}},
 		{"Finding your X-Wing Alliance folder", func() error { return a.chooseGame(opts.gameArg) }},
 		{"Connecting to the headset", a.connect},
-		{"Installing the app", a.installApp},
-		{"Preparing the game folder on the headset", a.prepareAppFolder},
-		{"Pilots", a.copyPilots},
-		{"Copying the game files", a.copyGame},
+		{"Installing the app", a.either(a.frameInstall, a.installApp)},
+		{"Preparing the game folder on the headset", a.either(func() error { return nil }, a.prepareAppFolder)},
+		{"Pilots", a.either(a.frameCopyPilots, a.copyPilots)},
+		{"Copying the game files", a.either(a.frameCopyGame, a.copyGame)},
 		{"Done", func() error { a.doneMenu(true); return nil }},
 	}
 	if !opts.noUpdate {

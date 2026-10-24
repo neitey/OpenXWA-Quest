@@ -32,6 +32,7 @@ const (
 	routeUSB     = "usb"
 	routeUSBWiFi = "usbwifi"
 	routeWiFi    = "wifi"
+	routeFrame   = "frame" // Steam Frame: into its Steam Library over SSH (steamlib.go)
 	adbTCPPort   = 5555
 )
 
@@ -51,10 +52,11 @@ func (a *app) saveSetting(key, value string) {
 
 // routeQuestion is the connection step's card.
 func routeQuestion(last string) Question {
-	if last != routeUSBWiFi && last != routeWiFi {
+	if last != routeUSBWiFi && last != routeWiFi && last != routeFrame {
 		last = routeUSB
 	}
 	opts := []Option{
+		{ID: routeFrame, Label: "Steam Frame (into its Steam Library)", Key: "f"},
 		{ID: routeUSB, Label: "USB cable", Key: "u"},
 		{ID: routeUSBWiFi, Label: "USB, then switch to Wi-Fi", Key: "s"},
 		{ID: routeWiFi, Label: "Wi-Fi", Key: "w"},
@@ -67,8 +69,9 @@ func routeQuestion(last string) Question {
 	return Question{
 		Kind:  "buttons",
 		Title: "How should the launcher reach the headset?",
-		Text: "Steam Frame: choose Wi-Fi (recommended). Start \"Lepton Development\" on the\n" +
-			"headset first.\n\n" +
+		Text: "Steam Frame: choose \"Steam Frame\". The game goes into the headset's Steam\n" +
+			"Library over Wi-Fi (SSH), nothing is deleted when it closes, and \"Lepton\n" +
+			"Development\" is not needed. (Wi-Fi and USB reach Lepton Development instead.)\n\n" +
 			"Meta Quest and Pico: choose USB cable. To unplug the cable while the files\n" +
 			"are copied, choose \"USB, then switch to Wi-Fi\": Wi-Fi works only after a\n" +
 			"USB connection, and lasts until the headset sleeps or restarts.\n\n" +
@@ -86,7 +89,7 @@ func (a *app) chooseRoute() (string, error) {
 		return "", errClosed
 	}
 	route := ans.ID
-	if route != routeUSBWiFi && route != routeWiFi {
+	if route != routeUSBWiFi && route != routeWiFi && route != routeFrame {
 		route = routeUSB
 	}
 	logf("connection route chosen: %s (last time: %s)", route, last)

@@ -79,8 +79,11 @@ Windows may warn that the launcher is not code-signed: "More info" -> "Run
 anyway". If it cannot find Google's adb tool (SideQuest and Meta Quest
 Developer Hub bring their own), it offers to download it from Google.
 
-**Steam Frame:** turn on Developer Mode, start "Lepton Development" and keep
-it running; the launcher connects to it over USB (or Wi-Fi).
+**Steam Frame:** turn on Developer Mode (Steam Settings > System) and choose
+"Steam Frame" in the launcher. It copies the game to the headset over Wi-Fi
+(SSH, with the Developer Mode password) and adds it to the Steam Library,
+where it stays like any other game. The older "Lepton Development" way
+(USB or Wi-Fi) still works too.
 
 ## Controls
 

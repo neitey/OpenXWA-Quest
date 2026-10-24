@@ -156,6 +156,14 @@ func (a *app) connect() error {
 		return err
 	}
 	a.route = route
+	a.lib = nil
+	if route == routeFrame {
+		err := a.frameConnect()
+		if err == errBackToUSB {
+			return a.connect() // ask the route again
+		}
+		return err
+	}
 	if route == routeWiFi {
 		err := a.wifiFlow()
 		if err == nil {

@@ -12,7 +12,12 @@ import (
 // the game" (not in --logs mode).
 func (a *app) doneMenu(withStart bool) {
 	title, text := "All done", "Put on the headset and open "+productName+" (Library -> Unknown sources)."
-	if a.lepton != "" {
+	if a.lib != nil {
+		text = productName + " is in the Steam Library on the headset (Steam calls such an\n" +
+			"entry \"Devkit Game: " + frameGameID + "\"; rename it in its Properties if you\n" +
+			"like). Start it from there, or with the button here. Your game files and\n" +
+			"settings stay on the headset; run this launcher again to update the game."
+	} else if a.lepton != "" {
 		text = "On the headset, " + productName + " is on the Android home screen in the\n" +
 			"\"Lepton Development\" window. (A copy installed another way may live in a\n" +
 			"different Lepton instance with its own files; use the one installed here.)\n\n" +
@@ -38,6 +43,10 @@ func (a *app) doneMenu(withStart bool) {
 		ans := ui.Ask(Question{Kind: "buttons", Title: title, Text: text, Options: opts, Default: "close"})
 		switch ans.ID {
 		case "start":
+			if a.lib != nil {
+				a.frameStartGame()
+				break
+			}
 			out, err := a.adb.shell(30*time.Second, "am start -n "+appActivity)
 			if err != nil || strings.Contains(out, "Error") {
 				say("Could not start the game: %s", strings.TrimSpace(out))
@@ -74,7 +83,12 @@ func (a *app) collectLogs() {
 		}
 	}
 	got := 0
-	if a.adb != nil && a.adb.Serial != "" {
+	if a.lib != nil {
+		got = a.frameCollectLogs(dir)
+		if got == 0 {
+			say("No logs on the headset yet (start the game once first).")
+		}
+	} else if a.adb != nil && a.adb.Serial != "" {
 		// openxwa-crash.txt is only there after a crash (kept until the next one).
 		for _, name := range []string{"openxwa.log", "openxwa-prev.log", "openxwa-crash.txt", "openxwa-quest.cfg"} {
 			if _, err := a.adb.run(2*time.Minute, "pull", a.remoteBase()+"/"+name, filepath.Join(dir, name)); err == nil &&

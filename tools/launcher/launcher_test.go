@@ -646,12 +646,16 @@ func TestSSHArgsAndErrors(t *testing.T) {
 
 func TestRouteQuestionAndSpeed(t *testing.T) {
 	q := routeQuestion("")
-	if q.Default != routeUSB || q.Options[0].Key != "" || q.Options[0].Style != "primary" {
+	if q.Default != routeUSB || q.Options[1].Key != "" || q.Options[1].Style != "primary" || q.Options[0].ID != routeFrame {
 		t.Errorf("default route: %+v", q)
 	}
 	q = routeQuestion(routeWiFi)
-	if q.Default != routeWiFi || q.Options[2].Key != "" || q.Options[0].Key != "u" {
+	if q.Default != routeWiFi || q.Options[3].Key != "" || q.Options[1].Key != "u" {
 		t.Errorf("wifi route: %+v", q)
+	}
+	q = routeQuestion(routeFrame)
+	if q.Default != routeFrame || q.Options[0].Style != "primary" {
+		t.Errorf("frame route: %+v", q)
 	}
 	p := Progress{Bytes: 100 << 20, TotalBytes: 400 << 20, Started: time.Now().Add(-10 * time.Second)}
 	if got := p.Speed(p.Started.Add(10 * time.Second)); got != "10 MB/s, about 30 s left" {
@@ -826,5 +830,55 @@ echo "ssh: closed" >&2
 	}
 	if !strings.Contains(string(data), "askpass request 1") || !strings.Contains(string(data), "exit code") {
 		t.Errorf("log lacks the askpass request or exit code:\n%s", data)
+	}
+}
+
+func TestFrameProbeAndVdf(t *testing.T) {
+	out := "home=/home/steamos\nsteam=/home/steamos/.local/share/Steam\nhostname=frame\n" +
+		"lepton=/home/steamos/.local/share/Steam/steamapps/common/Lepton/lepton\nsteam_running=1\nuser=123\n" +
+		"dir=/home/steamos/Applications/neitey-xw-alliance-vr\napk_size=10\napk_sha=ab\navail_kb=2048\n" + frameProbeEnd + "\n"
+	l, ok := parseFrameProbe(out)
+	if !ok || l.lepton == "" || !l.steamRunning || len(l.users) != 1 || l.availKB != 2048 || l.apkSize != 10 {
+		t.Fatalf("probe: %+v %v", l, ok)
+	}
+	if _, ok := parseFrameProbe("home=/x\n"); ok {
+		t.Error("incomplete probe accepted")
+	}
+	l.appid = 0x8abc1234
+	if l.runGameID() != 0x8abc123402000000 {
+		t.Errorf("rungameid %x", l.runGameID())
+	}
+	// A shortcuts.vdf with one devkit entry.
+	var b []byte
+	cs := func(s string) []byte { return append([]byte(s), 0) }
+	b = append(b, 0)
+	b = append(b, cs("shortcuts")...)
+	b = append(b, 0)
+	b = append(b, cs("0")...)
+	b = append(b, 2)
+	b = append(b, cs("appid")...)
+	b = append(b, 0x34, 0x12, 0xbc, 0x8a)
+	b = append(b, 1)
+	b = append(b, cs("AppName")...)
+	b = append(b, cs("Devkit Game: X")...)
+	b = append(b, 1)
+	b = append(b, cs("DevkitGameID")...)
+	b = append(b, cs(frameGameID)...)
+	b = append(b, 8, 8, 8)
+	root, err := vdfDecode(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := vdfFindDevkit(root, frameGameID); got != 0x8abc1234 {
+		t.Errorf("devkit appid %x", got)
+	}
+	if got := vdfFindDevkit(root, "Other"); got != 0 {
+		t.Errorf("other appid %x", got)
+	}
+	if portraitTile(nil) != nil {
+		t.Error("portrait from nothing")
+	}
+	if !strings.Contains(l.launchScript(), "SteamAppId=2327581236") || !strings.Contains(l.launchScript(), "\"$lepton\" start") {
+		t.Errorf("launch script: %s", l.launchScript())
 	}
 }
