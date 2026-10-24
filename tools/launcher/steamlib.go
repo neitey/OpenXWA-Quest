@@ -660,8 +660,9 @@ func (l *frameLibrary) findShortcut() uint32 {
 	return 0
 }
 
-// frameGridArt gives the Library entry pictures from the APK: its splash as
-// the landscape and hero images, its icon on a portrait tile.
+// frameGridArt gives the Library entry pictures from the APK: its box art
+// (assets/vr/boxart.png) as the portrait, its splash as the landscape and
+// hero images, its icon. Steam shows them after its next Library refresh.
 func (a *app) frameGridArt() {
 	l := a.lib
 	zr, err := zip.OpenReader(a.apkPath)
@@ -691,7 +692,11 @@ func (a *app) frameGridArt() {
 		items = append(items, tarItem{Rel: id + ".png", Data: splash, Size: int64(len(splash))},
 			tarItem{Rel: id + "_hero.png", Data: splash, Size: int64(len(splash))})
 	}
-	if portrait := portraitTile(icon); portrait != nil {
+	portrait := read("assets/vr/boxart.png") // the box art; older APKs: a tile with the icon
+	if portrait == nil {
+		portrait = portraitTile(icon)
+	}
+	if portrait != nil {
 		items = append(items, tarItem{Rel: id + "p.png", Data: portrait, Size: int64(len(portrait))})
 	}
 	if icon != nil {
