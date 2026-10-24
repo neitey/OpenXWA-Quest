@@ -1,27 +1,20 @@
 #include "xwa_runtime/runtime/vr_buttons.h"
 
 #include "xwa/flight/flight.h"
+#include "xwa_runtime/runtime/vr_mapping.h"
+
+#include <SDL3/SDL_timer.h>
 
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-/* VR controller buttons in flight, one action each (the left grip opens the
- * radial menu, the quick wheel in vr_lap_console.c; there is no shifted
- * layer). Left-handed controls swap the controllers under these
- * (Aeron_XrLeftHanded), so the table stays as it is. Fire, steering, roll
- * and the throttle lever stay on the virtual gamepad. */
-static const XwaVrButtonBinding k_bindings[AERON_XR_BUTTON_COUNT] = {
-	[AERON_XR_BUTTON_A]            = { KEY_T, KEY_NONE },     /* next target */
-	[AERON_XR_BUTTON_B]            = { KEY_Y, KEY_NONE },     /* previous target */
-	[AERON_XR_BUTTON_X]            = { KEY_R, KEY_NONE },     /* closest enemy */
-	[AERON_XR_BUTTON_Y]            = { KEY_E, KEY_NONE },     /* my attacker */
-	[AERON_XR_BUTTON_LEFT_TRIGGER] = { KEY_W, KEY_NONE },     /* change weapon */
-	[AERON_XR_BUTTON_LEFT_STICK]   = { KEY_X, KEY_NONE },     /* link weapons */
-	[AERON_XR_BUTTON_RIGHT_STICK]  = { KEY_ALT_1, KEY_NONE }, /* target in sights */
-	[AERON_XR_BUTTON_RIGHT_GRIP]   = { KEY_C, KEY_NONE },     /* countermeasures */
-};
+/* VR controller buttons in flight: the player's mapping (vr_mapping.c,
+ * VR Options > Controller Buttons). Left-handed controls swap the
+ * controllers under it (Aeron_XrLeftHanded). Steering, roll and the
+ * throttle lever stay on the virtual gamepad, and so does fire, on whichever
+ * buttons the mapping puts it (Aeron_XrSetFireButtons). */
 
 /* The lap console's buttons (and the voice commands, which use them) that
  * are one game key. */
@@ -78,10 +71,178 @@ static const uint16_t k_console_extra_keys[] = {
 	KEY_SPACE,
 };
 
-const XwaVrButtonBinding* XwaVrButtons_Binding(AeronXrButton button) {
-	static const XwaVrButtonBinding none = { KEY_NONE, KEY_NONE };
-	return (int)button >= 0 && (int)button < AERON_XR_BUTTON_COUNT ? &k_bindings[button] : &none;
+/* A function's game key: its own, or its lap console action's. */
+static uint16_t fn_key(int fn) {
+	const XwaVrFunction* f = XwaVrMap_FunctionInfo(fn);
+	if (f->kind == XWA_VRF_KIND_KEY) {
+		return f->key;
+	}
+	return KEY_NONE;
 }
+
+/* Whether a slot is there on the controllers in use (the Frame's extras). */
+static int slot_present(int s) {
+	return !XwaVrMap_SlotInfo((AeronXrButton)s)->frame_only || Aeron_XrFrameControls();
+}
+
+const XwaVrButtonBinding* XwaVrButtons_Binding(AeronXrButton button) {
+	static XwaVrButtonBinding binding;
+	const XwaVrMapping* m = XwaVrMap_Current();
+	binding.plain = binding.shifted = KEY_NONE;
+	if ((int)button < 0 || (int)button >= AERON_XR_BUTTON_COUNT) {
+		return &binding;
+	}
+	binding.plain = fn_key(XwaVrMap_Effective(m, button, 0));
+	if (m->grip_alt != XWA_VR_GRIP_ALT_OFF && m->fn[button][1] && !(XwaVrMap_AltGripMask(m) & (1u << button))) {
+		binding.shifted = fn_key(m->fn[button][1]);
+	}
+	return &binding;
+}
+
+int XwaVrButtons_Function(AeronXrButton button, int alt) {
+	const XwaVrMapping* m = XwaVrMap_Current();
+	if (alt && m->grip_alt == XWA_VR_GRIP_ALT_OFF) {
+		return 0;
+	}
+	if (alt) {
+		return (XwaVrMap_AltGripMask(m) & (1u << button)) ? 0 : m->fn[button][1];
+	}
+	return XwaVrMap_Effective(m, button, 0);
+}
+
+int XwaVrButtons_IsAltGrip(AeronXrButton button) {
+	return (XwaVrMap_AltGripMask(XwaVrMap_Current()) & (1u << button)) != 0;
+}
+
+int XwaVrButtons_SlotHand(AeronXrButton button) {
+	const XwaVrSlotInfo* info = XwaVrMap_SlotInfo(button);
+	return info->physical || !Aeron_XrLeftHanded() ? info->hand : 1 - info->hand;
+}
+
+int XwaVrButtons_SlotPresent(AeronXrButton button) {
+	return (int)button >= 0 && (int)button < AERON_XR_BUTTON_COUNT && slot_present((int)button);
+}
+
+int XwaVrButtons_AltHeld(void) { return XwaVrMap_AltHeld(XwaVrMap_Current(), Aeron_XrFlightButtonsHeld()); }
+
+void XwaVrButtons_SlotText(AeronXrButton button, int alt, char* out, size_t size) {
+	if (!out || size == 0) {
+		return;
+	}
+	out[0] = '\0';
+	if ((int)button < 0 || (int)button >= AERON_XR_BUTTON_COUNT) {
+		return;
+	}
+	if (!alt && XwaVrButtons_IsAltGrip(button)) {
+		snprintf(out, size, "Hold: Alt");
+		return;
+	}
+	const int fn = XwaVrButtons_Function(button, alt);
+	const XwaVrFunction* f = XwaVrMap_FunctionInfo(fn);
+	const int grip = button == AERON_XR_BUTTON_LEFT_GRIP || button == AERON_XR_BUTTON_RIGHT_GRIP;
+	const char* voice = getenv("XWA_XR_VOICE");
+	switch (f->kind) {
+		case XWA_VRF_KIND_NONE:
+			return;
+		case XWA_VRF_KIND_FIRE:
+			snprintf(out, size, "Fire");
+			return;
+		case XWA_VRF_KIND_WHEEL:
+			snprintf(out, size, "%s", grip ? "Hold: quick wheel" : "Quick wheel (open / close)");
+			return;
+		case XWA_VRF_KIND_VOICE:
+			snprintf(out, size, "%s", voice && (voice[0] == 'h' || voice[0] == 'H') ? "Hold: voice command" : "Voice command");
+			return;
+		default:
+			snprintf(out, size, "%s", f->label);
+			return;
+	}
+}
+
+/* ---- The quick wheel and voice on buttons -------------------------------- */
+
+/* The wheel on a button that is not a grip opens with a press and closes
+ * with the next (a grip holds it open, as before). */
+static struct {
+	int open;
+	int hand;
+} g_wheel_toggle;
+
+void XwaVrButtons_WheelToggle(AeronXrButton button) {
+	const int hand = XwaVrButtons_SlotHand(button);
+	if (g_wheel_toggle.open && g_wheel_toggle.hand == hand) {
+		g_wheel_toggle.open = 0;
+	} else {
+		g_wheel_toggle.open = 1;
+		g_wheel_toggle.hand = hand;
+	}
+}
+
+void XwaVrButtons_WheelClose(void) { g_wheel_toggle.open = 0; }
+
+int XwaVrButtons_WheelSource(int* hand, int* grip, uint32_t squeezing) {
+	const XwaVrMapping* m = XwaVrMap_Current();
+	if (g_wheel_toggle.open) {
+		*hand = g_wheel_toggle.hand;
+		*grip = 0;
+		return 1;
+	}
+	/* A grip with the wheel holds it open; the one squeezed first when both
+	 * have it (`squeezing`: bit per physical hand). */
+	const int alt = XwaVrButtons_AltHeld();
+	int found = -1;
+	static const AeronXrButton grips[2] = { AERON_XR_BUTTON_LEFT_GRIP, AERON_XR_BUTTON_RIGHT_GRIP };
+	for (int g = 0; g < 2; ++g) {
+		if (XwaVrMap_FunctionInfo(XwaVrMap_Effective(m, grips[g], alt))->kind != XWA_VRF_KIND_WHEEL) {
+			continue;
+		}
+		const int h = XwaVrButtons_SlotHand(grips[g]);
+		if (found < 0 || (squeezing & (1u << h))) {
+			found = h;
+		}
+	}
+	if (found < 0) {
+		return 0;
+	}
+	*hand = found;
+	*grip = 1;
+	return 1;
+}
+
+int XwaVrButtons_VoiceButtons(void) {
+	const XwaVrMapping* m = XwaVrMap_Current();
+	for (int s = 0; s < AERON_XR_BUTTON_COUNT; ++s) {
+		for (int alt = 0; alt < 2; ++alt) {
+			if (XwaVrMap_FunctionInfo(m->fn[s][alt])->kind == XWA_VRF_KIND_VOICE && slot_present(s)) {
+				return 1;
+			}
+		}
+	}
+	return 0;
+}
+
+int XwaVrButtons_VoiceHeld(int hand) {
+	const XwaVrMapping* m = XwaVrMap_Current();
+	const uint32_t held = Aeron_XrFlightButtonsHeld();
+	const uint32_t slots = XwaVrMap_SlotsOfKind(m, XWA_VRF_KIND_VOICE, held) & held;
+	for (int s = 0; s < AERON_XR_BUTTON_COUNT; ++s) {
+		if ((slots & (1u << s)) && XwaVrButtons_SlotHand((AeronXrButton)s) == hand) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+/* ---- Assigning by press (the mapping screen) ----------------------------- */
+
+/* Set every frame the screen waits; it lapses on its own shortly after
+ * (so a press that was taken is not also B's "back", and a screen closed
+ * mid-wait leaves nothing switched off). */
+static uint64_t g_capture_ms;
+
+void XwaVrButtons_SetCaptureActive(int active) { g_capture_ms = active ? SDL_GetTicks() + 1u : 0u; }
+
+int XwaVrButtons_CaptureActive(void) { return g_capture_ms != 0 && SDL_GetTicks() - g_capture_ms < 400u; }
 
 uint16_t XwaVrButtons_ConsoleKey(XwaVrConsoleAction action) {
 	return (int)action > XWA_VRC_NONE && (int)action < XWA_VRC_COUNT ? k_console_keys[action] : KEY_NONE;
@@ -94,25 +255,42 @@ int XwaVrButtons_SticksSwapped(void) {
 
 const char* XwaVrButtons_ButtonName(AeronXrButton button, int compact) {
 	static const char* const names[AERON_XR_BUTTON_COUNT][2] = {
-		[AERON_XR_BUTTON_A]            = { "A", "A" },
-		[AERON_XR_BUTTON_B]            = { "B", "B" },
-		[AERON_XR_BUTTON_X]            = { "X", "X" },
-		[AERON_XR_BUTTON_Y]            = { "Y", "Y" },
-		[AERON_XR_BUTTON_LEFT_TRIGGER] = { "left trigger", "L-trigger" },
-		[AERON_XR_BUTTON_LEFT_STICK]   = { "left stick click", "L-stick click" },
-		[AERON_XR_BUTTON_RIGHT_STICK]  = { "right stick click", "R-stick click" },
-		[AERON_XR_BUTTON_RIGHT_GRIP]   = { "right grip", "R-grip" },
+		[AERON_XR_BUTTON_A]             = { "A", "A" },
+		[AERON_XR_BUTTON_B]             = { "B", "B" },
+		[AERON_XR_BUTTON_X]             = { "X", "X" },
+		[AERON_XR_BUTTON_Y]             = { "Y", "Y" },
+		[AERON_XR_BUTTON_LEFT_TRIGGER]  = { "left trigger", "L-trigger" },
+		[AERON_XR_BUTTON_LEFT_STICK]    = { "left stick click", "L-stick click" },
+		[AERON_XR_BUTTON_RIGHT_STICK]   = { "right stick click", "R-stick click" },
+		[AERON_XR_BUTTON_RIGHT_GRIP]    = { "right grip", "R-grip" },
+		[AERON_XR_BUTTON_RIGHT_TRIGGER] = { "right trigger", "R-trigger" },
+		[AERON_XR_BUTTON_LEFT_GRIP]     = { "left grip", "L-grip" },
+		[AERON_XR_BUTTON_DPAD_UP]       = { "d-pad up", "D-pad up" },
+		[AERON_XR_BUTTON_DPAD_DOWN]     = { "d-pad down", "D-pad down" },
+		[AERON_XR_BUTTON_DPAD_LEFT]     = { "d-pad left", "D-pad left" },
+		[AERON_XR_BUTTON_DPAD_RIGHT]    = { "d-pad right", "D-pad right" },
+		[AERON_XR_BUTTON_BUMPER_LEFT]   = { "left bumper", "L-bumper" },
+		[AERON_XR_BUTTON_BUMPER_RIGHT]  = { "right bumper", "R-bumper" },
 	};
-	/* Left-handed: the control on the other controller (aeron.h). */
+	/* Left-handed: the control on the other controller (aeron.h); the
+	 * Frame's d-pad and bumpers stay where they are. */
 	static const char* const mirrored[AERON_XR_BUTTON_COUNT][2] = {
-		[AERON_XR_BUTTON_A]            = { "X", "X" },
-		[AERON_XR_BUTTON_B]            = { "Y", "Y" },
-		[AERON_XR_BUTTON_X]            = { "A", "A" },
-		[AERON_XR_BUTTON_Y]            = { "B", "B" },
-		[AERON_XR_BUTTON_LEFT_TRIGGER] = { "right trigger", "R-trigger" },
-		[AERON_XR_BUTTON_LEFT_STICK]   = { "right stick click", "R-stick click" },
-		[AERON_XR_BUTTON_RIGHT_STICK]  = { "left stick click", "L-stick click" },
-		[AERON_XR_BUTTON_RIGHT_GRIP]   = { "left grip", "L-grip" },
+		[AERON_XR_BUTTON_A]             = { "X", "X" },
+		[AERON_XR_BUTTON_B]             = { "Y", "Y" },
+		[AERON_XR_BUTTON_X]             = { "A", "A" },
+		[AERON_XR_BUTTON_Y]             = { "B", "B" },
+		[AERON_XR_BUTTON_LEFT_TRIGGER]  = { "right trigger", "R-trigger" },
+		[AERON_XR_BUTTON_LEFT_STICK]    = { "right stick click", "R-stick click" },
+		[AERON_XR_BUTTON_RIGHT_STICK]   = { "left stick click", "L-stick click" },
+		[AERON_XR_BUTTON_RIGHT_GRIP]    = { "left grip", "L-grip" },
+		[AERON_XR_BUTTON_RIGHT_TRIGGER] = { "left trigger", "L-trigger" },
+		[AERON_XR_BUTTON_LEFT_GRIP]     = { "right grip", "R-grip" },
+		[AERON_XR_BUTTON_DPAD_UP]       = { "d-pad up", "D-pad up" },
+		[AERON_XR_BUTTON_DPAD_DOWN]     = { "d-pad down", "D-pad down" },
+		[AERON_XR_BUTTON_DPAD_LEFT]     = { "d-pad left", "D-pad left" },
+		[AERON_XR_BUTTON_DPAD_RIGHT]    = { "d-pad right", "D-pad right" },
+		[AERON_XR_BUTTON_BUMPER_LEFT]   = { "left bumper", "L-bumper" },
+		[AERON_XR_BUTTON_BUMPER_RIGHT]  = { "right bumper", "R-bumper" },
 	};
 	if ((int)button < 0 || (int)button >= AERON_XR_BUTTON_COUNT) {
 		return "?";
@@ -143,12 +321,18 @@ const char* XwaVrButtons_KeyLabel(uint16_t key, int compact) {
 		/* The quick wheel's centre (and the voice command "confirm"). */
 		return "wheel > Confirm";
 	}
-	/* A plain press wins over a shifted one. */
+	/* A plain press wins over an Alt one; the Touch buttons over the
+	 * Frame's extras. */
 	for (int shifted = 0; shifted < 2; ++shifted) {
-		for (int b = 0; b < AERON_XR_BUTTON_COUNT; ++b) {
-			if ((shifted ? k_bindings[b].shifted : k_bindings[b].plain) == key) {
+		for (int frame = 0; frame < 2; ++frame) {
+			for (int b = 0; b < AERON_XR_BUTTON_COUNT; ++b) {
+				const XwaVrButtonBinding* binding = XwaVrButtons_Binding((AeronXrButton)b);
+				if (XwaVrMap_SlotInfo((AeronXrButton)b)->frame_only != frame || !slot_present(b) ||
+					(shifted ? binding->shifted : binding->plain) != key) {
+					continue;
+				}
 				const char* name = XwaVrButtons_ButtonName((AeronXrButton)b, compact);
-				snprintf(label, sizeof label, "%s%s", shifted ? (compact ? "grip+" : "grip + ") : "", name);
+				snprintf(label, sizeof label, "%s%s", shifted ? (compact ? "Alt+" : "Alt + ") : "", name);
 				return label;
 			}
 		}

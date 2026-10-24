@@ -215,6 +215,7 @@ set(XWA_RUNTIME_SOURCES
     src/xwa_runtime/config/modern_video_options.c
     src/xwa_runtime/config/modern_video_options_screen.c
     src/xwa_runtime/config/modern_vr_options_screen.c
+    src/xwa_runtime/config/modern_vr_buttons_screen.c
     src/xwa_runtime/config/modern_vr_credits_screen.c
     src/xwa_runtime/config/modern_mission_hints_screen.c
     src/xwa_runtime/hooks/orientation_hook.c
@@ -235,6 +236,7 @@ set(XWA_RUNTIME_SOURCES
     src/xwa_runtime/runtime/port.c
     src/xwa_runtime/runtime/presentation.c
     src/xwa_runtime/runtime/vr_buttons.c
+    src/xwa_runtime/runtime/vr_mapping.c
     src/xwa_runtime/snapshot/snapshot.c
     src/xwa_runtime/snapshot/snapshot_export.c
     src/xwa_runtime/snapshot/snapshot_flight_map.c

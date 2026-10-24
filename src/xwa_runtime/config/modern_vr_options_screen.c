@@ -7,7 +7,9 @@
 #include "xwa/frontend/frontend_color.h"
 #include "xwa/frontend/frontend_draw.h"
 #include "xwa/frontend/frontend_text.h"
+#include "xwa_runtime/config/modern_vr_buttons_screen.h"
 #include "xwa_runtime/runtime/vr_buttons.h"
+#include "xwa_runtime/runtime/vr_mapping.h"
 
 #include <SDL3/SDL.h>
 
@@ -385,6 +387,13 @@ void XwaModernVrOptions_SaveValue(const char* key, const char* value) {
 	}
 }
 
+void XwaModernVrOptions_SaveValues(const char* const* keys, const char* const* values, int count) {
+	/* vr_write_cfg takes at most 32 keys at a time. */
+	for (int i = 0; keys && values && i < count; i += 32) {
+		vr_write_cfg(keys + i, values + i, count - i < 32 ? count - i : 32);
+	}
+}
+
 static void vr_persist(void) {
 	const char* keys[VR_COUNT];
 	const char* values[VR_COUNT];
@@ -500,6 +509,7 @@ void XwaModernVrOptions_RestoreDefaults(void) {
 		SDL_setenv_unsafe(place_keys[i], place_values[i], 1);
 	}
 	vr_write_cfg(place_keys, place_values, places);
+	XwaModernVrButtons_RestoreDefaults(); /* and the default buttons */
 	g_vr.loaded = 0; /* the VR Options screen reads them again */
 	Aeron_LogInfo("xwa.config", "VR settings restored to the recommended defaults");
 }
@@ -543,57 +553,25 @@ static int vr_page_rows(int page) {
 	return n;
 }
 
-/* "Help": the controller layout, from the button bindings (so it follows
- * left-handed controls and any change of the layout). */
-static int vr_help_row(int y, const char* control, const char* action) {
-	char a[96];
-	snprintf(a, sizeof a, "%s", action ? action : "");
-	a[0] = (char)toupper((unsigned char)a[0]);
-	FrontendText_Draw(12, control, 312 - (int)FrontendText_MeasureWidth(control, 12), y, g_colorLightBlue);
-	FrontendText_Draw(12, a, 328, y, g_colorPaleBlue);
-	return y + 16;
-}
-
-static void vr_draw_help(XwaModernOptionsMenu* menu) {
-	const int lh = Aeron_XrLeftHanded();
-	/* Swap Thumbsticks trades the sticks' jobs on top of the hand setting. */
-	const int steer_left = lh != XwaVrButtons_SticksSwapped();
-	int y = menu->y + 4;
-	y = vr_help_row(y, steer_left ? "Left stick" : "Right stick", "Pitch and yaw");
-	y = vr_help_row(y, steer_left ? "Right stick" : "Left stick", "Roll (left/right), throttle (fwd/back)");
-	y = vr_help_row(y, lh ? "Left trigger" : "Right trigger", "Fire");
-	y = vr_help_row(y, "Both triggers", "Land / hyperspace (when offered)");
-	static const AeronXrButton k_order[] = {
-		AERON_XR_BUTTON_A,           AERON_XR_BUTTON_B,          AERON_XR_BUTTON_X,
-		AERON_XR_BUTTON_Y,           AERON_XR_BUTTON_LEFT_TRIGGER, AERON_XR_BUTTON_RIGHT_STICK,
-		AERON_XR_BUTTON_LEFT_STICK,  AERON_XR_BUTTON_RIGHT_GRIP,
-	};
-	for (size_t i = 0; i < sizeof k_order / sizeof k_order[0]; ++i) {
-		const XwaVrButtonBinding* b = XwaVrButtons_Binding(k_order[i]);
-		const char* action = b && b->plain ? XwaVrButtons_KeyAction(b->plain) : NULL;
-		char control[48];
-		snprintf(control, sizeof control, "%s", XwaVrButtons_ButtonName(k_order[i], 0));
-		control[0] = (char)toupper((unsigned char)control[0]);
-		if (action) {
-			y = vr_help_row(y, control, action);
-		}
-	}
-	y = vr_help_row(y, lh ? "Right grip (hold)" : "Left grip (hold)", "Radial menu: point, pull the trigger");
-	y = vr_help_row(y, "Grip on a panel", "Move HUD panels, the console, the stick");
-	y = vr_help_row(y, "Left menu button", "Pause / game menu");
-	y = vr_help_row(y, "Thumb rest", "Voice command (as set in Voice Commands)");
-	y = vr_help_row(y, "In menus", "Right controller points, trigger selects");
-	y = vr_help_row(y, "Stick Response", "Precise: fine aim; full tilt, full rate");
-	menu->y = y + 12;
-}
+static const char* vr_voice_slot_name(AeronXrButton slot) { return XwaVrButtons_ButtonName(slot, 0); }
 
 static void vr_draw_voice(XwaModernOptionsMenu* menu) {
 	const char* mode = SDL_getenv("XWA_XR_VOICE");
-	const char* how = mode && SDL_strcasecmp(mode, "hold") == 0
-						  ? "Hold a thumb rest and speak, e.g. \"attack my target\""
+	const int hold = mode && SDL_strcasecmp(mode, "hold") == 0;
+	const char* how = hold ? "Hold a thumb rest and speak, e.g. \"attack my target\""
 					  : mode && (mode[0] == '0' || SDL_strcasecmp(mode, "off") == 0)
 						  ? "Voice commands are off (VR Options: Voice Commands)"
 						  : "Double-tap a thumb rest, then speak, e.g. \"attack my target\"";
+	char on_button[160];
+	if (Aeron_XrFrameControls() && XwaVrButtons_VoiceButtons() && !(mode && (mode[0] == '0' || SDL_strcasecmp(mode, "off") == 0))) {
+		/* No thumb rests: the button the mapping gave voice commands. */
+		char where[96];
+		XwaVrMap_FunctionPlaces(XwaVrMap_Current(), XwaVrMap_FunctionByName("voice"), vr_voice_slot_name, 1, where,
+								sizeof where);
+		snprintf(on_button, sizeof on_button, "%s %s %s, e.g. \"attack my target\"", hold ? "Hold" : "Press", where,
+				 hold ? "and speak" : "then speak");
+		how = on_button;
+	}
 	FrontendRect rect;
 	FrontendDraw_RectAssign(&rect, 0, menu->y, 639, menu->y + 12);
 	FrontendText_DrawCentered(12, how, &rect, g_colorPaleBlue);
@@ -618,7 +596,7 @@ static void vr_draw_voice(XwaModernOptionsMenu* menu) {
 	menu->y = bottom + 30;
 }
 
-enum { VR_PAGE_MAIN, VR_PAGE_PERF, VR_PAGE_HELP, VR_PAGE_VOICE };
+enum { VR_PAGE_MAIN, VR_PAGE_PERF, VR_PAGE_VOICE, VR_PAGE_BUTTONS };
 
 int XwaModernVrOptionsScreen_Update(int menu_center_x, int* cursor_row) {
 	static int page;
@@ -629,18 +607,21 @@ int XwaModernVrOptionsScreen_Update(int menu_center_x, int* cursor_row) {
 		return 0;
 	}
 	vr_load();
-	if (page == VR_PAGE_HELP || page == VR_PAGE_VOICE) {
-		XwaModernOptionsMenu_Begin(&menu, menu_center_x, 38, cursor_row, 1);
-		XwaModernOptionsMenu_DrawTitle(&menu, page == VR_PAGE_HELP ? "Help: Controller Buttons" : "Voice Commands");
-		if (page == VR_PAGE_HELP) {
-			vr_draw_help(&menu);
-		} else {
-			vr_draw_voice(&menu);
+	if (page == VR_PAGE_BUTTONS) {
+		if (XwaModernVrButtonsScreen_Update(menu_center_x, cursor_row)) {
+			page = VR_PAGE_MAIN;
+			*cursor_row = 0;
 		}
+		return 0;
+	}
+	if (page == VR_PAGE_VOICE) {
+		XwaModernOptionsMenu_Begin(&menu, menu_center_x, 38, cursor_row, 1);
+		XwaModernOptionsMenu_DrawTitle(&menu, "Voice Commands");
+		vr_draw_voice(&menu);
 		back = XwaModernOptionsMenu_DrawAction(&menu, FrontendString_Get(STR_BACK), 87, 0);
 		back |= XwaModernOptionsMenu_TakeEscape(&menu);
 		if (back) {
-			*cursor_row = page == VR_PAGE_HELP ? 0 : 1;
+			*cursor_row = 1;
 			page = VR_PAGE_MAIN;
 		}
 		return 0;
@@ -662,8 +643,9 @@ int XwaModernVrOptionsScreen_Update(int menu_center_x, int* cursor_row) {
 	 * Back stays above the clip at y 435. */
 	XwaModernOptionsMenu_Begin(&menu, menu_center_x, 28, cursor_row, vr_page_rows(0) + 6);
 	XwaModernOptionsMenu_DrawTitle(&menu, "VR Options");
-	if (XwaModernOptionsMenu_DrawAction(&menu, "Help", 65, 0)) {
-		page = VR_PAGE_HELP;
+	if (XwaModernOptionsMenu_DrawAction(&menu, "Controller Buttons...", 65, 0)) {
+		XwaModernVrButtonsScreen_Reset();
+		page = VR_PAGE_BUTTONS;
 		*cursor_row = 0;
 		return 0;
 	}
