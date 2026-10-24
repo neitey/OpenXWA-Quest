@@ -207,6 +207,7 @@ type app struct {
 	storage     string // "/sdcard" or a fallback such as "/storage/emulated/0"
 	logsDir     string // last folder logs were collected into
 	uid         int    // the app's Linux uid on the headset (0 = not known yet)
+	appOwner    *owner // owner shown for a folder the app made itself (nil = not seen yet)
 	mkdirOK     bool   // folders made with mkdir belong to the app on this headset
 	helper      bool   // the app's helper (SetupProvider) copies the files
 	helperTried bool

@@ -390,6 +390,14 @@ func TestOwnership(t *testing.T) {
 			t.Errorf("foreignOwner(%v, %d) = %v", c.o, c.app, got)
 		}
 	}
+	// Steam Frame: what the app makes shows as root, so root is the app's.
+	lep := &app{uid: 10225, appOwner: &owner{"root", 0}}
+	if lep.foreign(owner{"root", 0}) || !lep.foreign(owner{"shell", 2000}) || lep.foreign(owner{"u0_a225", 10225}) {
+		t.Error("foreign with a learnt root owner")
+	}
+	if !(&app{uid: 10225}).foreign(owner{"root", 0}) {
+		t.Error("root without a learnt owner")
+	}
 	dump := "Packages:\n  Package [org.openxwa.quest] (4d2b1c):\n    userId=10225\n    versionName=1.0\n"
 	if parseAppUID(dump) != 10225 || parseAppUID("nothing") != 0 {
 		t.Error("parseAppUID")
