@@ -715,10 +715,10 @@ static void android_xr_defaults(void) {
 	if (s_android_fresh_settings && tier == XWA_XR_TIER_HIGH) {
 		/* Steam Frame: SteamVR recommends 1728 x 1728 per eye at its default
 		 * render scale while the panels are 2160 x 2160; a fresh install
-		 * starts at the panels' size (125 %) instead of the Quest's 110 %. */
-		SDL_setenv_unsafe("AERON_XR_RESOLUTION_SCALE", "1.25", 1);
-		XwaModernVrOptions_SaveValue("AERON_XR_RESOLUTION_SCALE", "1.25");
-		Aeron_LogInfo("xwa.config", "fresh install on a high-tier headset: resolution 125 % (the panels' size)");
+		 * starts at 120 % instead of the Quest's 110 %. */
+		SDL_setenv_unsafe("AERON_XR_RESOLUTION_SCALE", "1.2", 1);
+		XwaModernVrOptions_SaveValue("AERON_XR_RESOLUTION_SCALE", "1.2");
+		Aeron_LogInfo("xwa.config", "fresh install on a high-tier headset: resolution 120 %");
 	}
 	if (!SDL_getenv("AERON_XR_SCREEN_DISTANCE")) {
 		/* 1.1 m further than the 2.1 m it was; the menu scene's viewer sits
