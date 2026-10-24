@@ -82,6 +82,11 @@ func (a *app) collectLogs() {
 				got++
 			}
 		}
+		// The system log has what the game's own log cannot: the OpenXR
+		// loader's and runtime's messages (why VR did not start) and crashes.
+		if out, err := a.adb.shell(2*time.Minute, "logcat -d -v time -t 30000"); err == nil && strings.TrimSpace(out) != "" {
+			_ = os.WriteFile(filepath.Join(dir, "logcat.txt"), []byte(out), 0o644)
+		}
 		if got == 0 {
 			say("The game has not written a log on the headset yet (start it once first).")
 		}
