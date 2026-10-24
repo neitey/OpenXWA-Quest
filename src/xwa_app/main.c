@@ -449,7 +449,7 @@ static void android_load_settings(void) {
 				  "# Per-eye render resolution (lower = faster):\n"
 				  "#AERON_XR_RESOLUTION_SCALE=1.1\n"
 				  "# Per-eye pixel budget: caps the resolution above (low 2300000,\n"
-				  "# mid 3700000, high 4600000):\n"
+				  "# mid 3700000, high 6800000):\n"
 				  "#AERON_XR_EYE_PIXELS=3700000\n"
 				  "# Size cap of the three HUD images, as a fraction of the recommended eye\n"
 				  "# size (a higher eye resolution then costs no extra HUD work):\n"

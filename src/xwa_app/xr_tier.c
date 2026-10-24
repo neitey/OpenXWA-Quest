@@ -67,8 +67,10 @@ long XwaXrTier_EyePixels(XwaXrTier tier) {
 		 * size (1440 x 1584); a Pico 4 renders about 1520 x 1520. */
 		return 2300000;
 	case XWA_XR_TIER_HIGH:
-		/* Adreno 750, about 25 % more. */
-		return 4600000;
+		/* Adreno 750 (Steam Frame, 2160 x 2160 panels): room for rendering
+		 * above the panel size (SteamVR recommends 1728 x 1728 at 72 Hz; 150 %
+		 * of that is 2592 x 2592). */
+		return 6800000;
 	default:
 		/* Quest 3 stays as it is; Pico 4 Ultra (1920 x 1920 recommended)
 		 * renders about 1920 x 1920 instead of 2110 x 2110. */
