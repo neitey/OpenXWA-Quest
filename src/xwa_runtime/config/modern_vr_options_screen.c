@@ -39,6 +39,7 @@ enum {
 	VR_HUD_SIZE,
 	VR_DEPTH_BOOST,
 	VR_WORLD_SCALE,
+	VR_SEAT,
 	VR_COCKPIT_MODEL,
 	VR_POINT_LIGHTS,
 	VR_SHADOWS,
@@ -121,6 +122,13 @@ static const char* const k_cockpit_values[] = { "xwa", "revival" };
  * exponent, 1 = linear. */
 static const char* const k_curve_texts[] = { "Direct", "Medium", "Precise", "Very Precise" };
 static const char* const k_curve_values[] = { "1.0", "1.5", "2.0", "2.6" };
+/* Seat Position (a slider, Closer .. Further): metres further back from the
+ * window, 40 cm in 5 cm steps about each cockpit's own seat
+ * (xwa_remaster/vr_cockpit_hud.h, XwaVrCockpitHud_SeatBack). */
+static const char* const k_seat_texts[] = { "-20 cm", "-15 cm", "-10 cm", "-5 cm", "0",
+											"+5 cm",  "+10 cm", "+15 cm", "+20 cm" };
+static const char* const k_seat_values[] = { "-0.20", "-0.15", "-0.10", "-0.05", "0",
+											 "0.05",  "0.10",  "0.15",  "0.20" };
 
 /* Page 1 holds what costs or saves GPU time: each night-shift
  * optimization can be switched off there on its own to find a regression. */
@@ -129,6 +137,9 @@ static const VrSetting k_settings[VR_COUNT] = {
 	{ "XWA_XR_HUD_SCALE", "Helmet HUD Size", k_size_texts, k_size_values, 5, 2, 81, 0 },
 	{ "XWA_XR_DEPTH_BOOST", "Depth Boost", k_boost_texts, k_boost_values, 9, 0, 82, 0 },
 	{ "XWA_XR_WORLD_SCALE", "World Scale", k_scale_texts, k_scale_values, 9, 6, 83, 0 },
+	/* Live: where you sit in every cockpit (the HUD panels on the dash
+	 * move with it). */
+	{ "XWA_XR_SEAT_POSITION", "Seat Position", k_seat_texts, k_seat_values, 9, 4, 61, 0 },
 	/* Live: the next frame draws the other cockpit. */
 	{ "XWA_XR_COCKPIT_MODEL", "Cockpit Model", k_cockpit_texts, k_cockpit_values, 2, 0, 63, 0 },
 	{ "XWA_POINT_LIGHTS", "Dynamic Lights", k_off_rec_texts, k_toggle_values, 2, 0, 84, 1 },
@@ -178,9 +189,6 @@ static const VrSetting k_settings[VR_COUNT] = {
 	{ "XWA_XR_GPU_TIMING", "GPU Timing in Log (restart)", k_toggle_texts, k_toggle_values, 2, 1, 72, 1 },
 };
 
-/* "Restore VR Defaults" writes every setting in one vr_write_cfg call,
- * which takes at most 32 keys. */
-typedef char vr_count_fits_vr_write_cfg[(VR_COUNT <= 32) ? 1 : -1];
 
 static struct {
 	int loaded;
@@ -405,7 +413,7 @@ static void vr_persist(void) {
 			n++;
 		}
 	}
-	vr_write_cfg(keys, values, n);
+	XwaModernVrOptions_SaveValues(keys, values, n); /* 32 keys per file write */
 	memset(g_vr.dirty, 0, sizeof g_vr.dirty);
 }
 
@@ -441,6 +449,7 @@ static const struct {
 	const char* value;
 } k_recommended[] = {
 	{ "XWA_XR_WORLD_SCALE", "0.75" },
+	{ "XWA_XR_SEAT_POSITION", "0" },
 	{ "XWA_POINT_LIGHTS", "0" },
 	{ "XWA_XR_DEPTH_BOOST", "2" },
 	{ "XWA_XR_FOVEATION", "high" },
@@ -498,7 +507,7 @@ void XwaModernVrOptions_RestoreDefaults(void) {
 		SDL_setenv_unsafe(keys[i], values[i], 1);
 	}
 	SDL_setenv_unsafe("AERON_XR_PERF_LEVEL", strcmp(SDL_getenv("XWA_XR_GPU_OPT"), "0") ? "high" : "0", 1);
-	vr_write_cfg(keys, values, VR_COUNT);
+	XwaModernVrOptions_SaveValues(keys, values, VR_COUNT); /* 32 keys per file write */
 	vr_reset_hud_layouts();
 	const char* place_keys[sizeof k_recommended_places / sizeof k_recommended_places[0]];
 	const char* place_values[sizeof k_recommended_places / sizeof k_recommended_places[0]];
@@ -526,9 +535,12 @@ static void vr_draw_settings(XwaModernOptionsMenu* menu, int page) {
 							 (i == VR_STICK_TWIST && g_vr.index[VR_FLIGHT_STICK] == 0) ||
 							 (i == VR_WHEEL_SLOWMO && g_vr.index[VR_WHEEL] == 0);
 		uint8_t value = g_vr.index[i];
-		if (XwaModernOptionsMenu_DrawCycleU8(menu, &value, setting->label, setting->texts, setting->count,
-											 setting->button_id, disabled) &&
-			value != g_vr.index[i]) {
+		const int changed =
+			i == VR_SEAT ? XwaModernOptionsMenu_DrawSliderU8(menu, &value, setting->label, "Closer", "Further",
+															 setting->count - 1, disabled)
+						 : XwaModernOptionsMenu_DrawCycleU8(menu, &value, setting->label, setting->texts, setting->count,
+															setting->button_id, disabled);
+		if (changed && value != g_vr.index[i]) {
 			g_vr.index[i] = value;
 			g_vr.dirty[i] = 1;
 			SDL_setenv_unsafe(setting->key, setting->values[value], 1);
@@ -635,13 +647,13 @@ int XwaModernVrOptionsScreen_Update(int menu_center_x, int* cursor_row) {
 		back |= XwaModernOptionsMenu_TakeEscape(&menu);
 		if (back) {
 			page = VR_PAGE_MAIN;
-			*cursor_row = 2 + vr_page_rows(0) + 2; /* on "Performance / GPU..." */
+			*cursor_row = 2 + vr_page_rows(0) + 1; /* on "Performance / GPU..." */
 		}
 		return 0;
 	}
 	/* The longest page: it starts higher and its action rows are 14 px, so
 	 * Back stays above the clip at y 435. */
-	XwaModernOptionsMenu_Begin(&menu, menu_center_x, 28, cursor_row, vr_page_rows(0) + 6);
+	XwaModernOptionsMenu_Begin(&menu, menu_center_x, 28, cursor_row, vr_page_rows(0) + 5);
 	XwaModernOptionsMenu_DrawTitle(&menu, "VR Options");
 	if (XwaModernOptionsMenu_DrawAction(&menu, "Controller Buttons...", 65, 0)) {
 		XwaModernVrButtonsScreen_Reset();
@@ -658,11 +670,9 @@ int XwaModernVrOptionsScreen_Update(int menu_center_x, int* cursor_row) {
 	menu.y -= 6;
 	vr_draw_settings(&menu, 0);
 
-	if (XwaModernOptionsMenu_DrawAction(&menu, "Reset HUD Panel Positions", 93, 0)) {
+	/* One row for both (room for Seat Position on this full page). */
+	if (XwaModernOptionsMenu_DrawAction(&menu, "Reset HUD Panel and Console Positions", 93, 0)) {
 		vr_reset_hud_layouts();
-	}
-	menu.y -= 6;
-	if (XwaModernOptionsMenu_DrawAction(&menu, "Reset Lap Console Position", 91, 0)) {
 		SDL_setenv_unsafe("XWA_XR_CONSOLE_POSE", "", 1);
 		XwaModernVrOptions_SaveValue("XWA_XR_CONSOLE_POSE", "");
 		Aeron_LogInfo("xwa.config", "lap console back at its default spot");

@@ -3208,7 +3208,8 @@ static void fl_hyper_build_tunnel_view(const AeronSceneCamera* camera, const flo
  * frame right over the aiming reticle, or sits too far back from the
  * window. There the cockpit model moves the other way, so the player sits
  * that far to the side or forward (metres of real head movement; x right,
- * forward towards the window). Pilot seat only, stereo only.
+ * forward towards the window). Pilot seat only (gunner seats take the
+ * player's Seat Position alone), stereo only.
  * XWA_XR_SEAT_FORWARD_<COCKPIT> (the cockpit model's name in capitals,
  * letters and digits only) overrides the forward offset. */
 static const struct {
@@ -3232,6 +3233,10 @@ static int fl_name_matches(const char* name, const char* key);
 /* The seat offset for this cockpit (metres of real head movement). */
 static void fl_xr_seat_offset(const XwaSnapshot* snap, float* x_m, float* forward_m) {
 	*x_m = *forward_m = 0.0f;
+	if (snap->cockpit.seat != 0) {
+		*forward_m = -XwaVrCockpitHud_SeatBack(); /* gunner seats: the player's setting only */
+		return;
+	}
 	for (size_t i = 0; i < sizeof k_xr_seat_shift / sizeof k_xr_seat_shift[0]; ++i) {
 		if ((k_xr_seat_shift[i].object_type && k_xr_seat_shift[i].object_type != snap->hud.instruments.player_object_type) ||
 			(k_xr_seat_shift[i].cockpit && !fl_name_matches(snap->cockpit.model_name, k_xr_seat_shift[i].cockpit))) {
@@ -3248,11 +3253,11 @@ static void fl_xr_seat_offset(const XwaSnapshot* snap, float* x_m, float* forwar
 		}
 	}
 	key[n] = '\0';
-	*forward_m = fl_xr_env(key, *forward_m);
+	*forward_m = fl_xr_env(key, *forward_m) - XwaVrCockpitHud_SeatBack();
 }
 
 static void fl_xr_seat_shift(const XwaSnapshot* snap, float m[16]) {
-	if (!snap || snap->cockpit.seat != 0 || !fl_xr_stereo_eligible(&snap->flight_camera)) {
+	if (!snap || !fl_xr_stereo_eligible(&snap->flight_camera)) {
 		return;
 	}
 	float x, forward;
