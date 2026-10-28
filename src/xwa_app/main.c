@@ -585,7 +585,7 @@ static void android_load_settings(void) {
 				  "# Voice commands: double-tap a thumb rest, then speak (doubletap), or\n"
 				  "# speak while the thumb is on the rest (hold); 0 = off:\n"
 				  "#XWA_XR_VOICE=doubletap\n"
-				  "# Controller buttons (VR Options > Controller Buttons): a function per\n"
+				  "# Controller buttons (VR Options > Remap Buttons): a function per\n"
 				  "# button, XWA_XR_BIND_<button>[_ALT]=<function> (no line = the default\n"
 				  "# layout); a grip set as Alt gives every other button a second function:\n"
 				  "#XWA_XR_GRIP_ALT=off\n"

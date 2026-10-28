@@ -5,7 +5,7 @@
 extern "C" {
 #endif
 
-/* VR Options > Controller Buttons (the button mapping, vr_mapping.h).
+/* VR Options > Remap Buttons (the button mapping, vr_mapping.h).
  * Draws and updates the page; returns nonzero when the player goes back. */
 int XwaModernVrButtonsScreen_Update(int menu_center_x, int* cursor_row);
 /* Back to its first page (when the options screen is entered anew). */

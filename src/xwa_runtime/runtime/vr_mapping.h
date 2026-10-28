@@ -2,7 +2,7 @@
 #define XWA_RUNTIME_VR_MAPPING_H
 
 /*
- * The player's VR controller button mapping (VR Options > Controller
+ * The player's VR controller button mapping (VR Options > Remap
  * Buttons): one function per button and layer. Every bindable control
  * (AeronXrButton: A B X Y, both triggers, stick clicks and grips, and the
  * Steam Frame's d-pad and bumpers) has a normal function and an Alt one;

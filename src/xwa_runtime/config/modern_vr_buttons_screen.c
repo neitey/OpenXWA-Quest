@@ -1,4 +1,4 @@
-/* VR Options > Controller Buttons: the player's button mapping
+/* VR Options > Remap Buttons: the player's button mapping
  * (xwa_runtime/runtime/vr_mapping.h), pointer-driven.
  *
  *   - Overview: every button with its function and its Alt function; a
@@ -490,7 +490,7 @@ int XwaModernVrButtonsScreen_Update(int menu_center_x, int* cursor_row) {
 
 	/* Overview. */
 	XwaModernOptionsMenu_Begin(&menu, menu_center_x, 28, cursor_row, 5);
-	XwaModernOptionsMenu_DrawTitle(&menu, "Controller Buttons");
+	XwaModernOptionsMenu_DrawTitle(&menu, "Remap Buttons");
 	bs_draw_overview(&menu, cursor_row);
 	if (s_bs.page != PAGE_OVERVIEW) {
 		return 0;

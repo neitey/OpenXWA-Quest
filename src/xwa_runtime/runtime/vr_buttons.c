@@ -11,7 +11,7 @@
 #include <string.h>
 
 /* VR controller buttons in flight: the player's mapping (vr_mapping.c,
- * VR Options > Controller Buttons). Left-handed controls swap the
+ * VR Options > Remap Buttons). Left-handed controls swap the
  * controllers under it (Aeron_XrLeftHanded). Steering, roll and the
  * throttle lever stay on the virtual gamepad, and so does fire, on whichever
  * buttons the mapping puts it (Aeron_XrSetFireButtons). */
