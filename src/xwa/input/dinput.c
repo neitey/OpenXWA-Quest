@@ -478,6 +478,9 @@ char DInput_Init(void) {
 
 // FUNCTION: XWA 0x42B900
 int DInput_ReadKeyboardState(void) {
+	if (!g_dinputKeyboardDevice) {
+		return -1; /* after DInput_Shutdown */
+	}
 	return g_dinputKeyboardDevice->lpVtbl->GetDeviceState(g_dinputKeyboardDevice, 256, g_dinputKeyboardState);
 }
 
@@ -489,6 +492,11 @@ int DInput_DrainKeyboardEvents(void) {
 
 	/* Flush the buffered keyboard events (INFINITE), then refresh the immediate state
 	 * to recompute the cached Ctrl/Shift/Alt flags. */
+	if (!g_dinputKeyboardDevice) {
+		/* Quitting from the options datapad: the flight display detaches it
+		 * after DInput_Shutdown released the keyboard. */
+		return 0;
+	}
 	flushCount = 0xFFFFFFFFu;
 	result = g_dinputKeyboardDevice->lpVtbl->GetDeviceData(
 		g_dinputKeyboardDevice, (uint32_t)sizeof(DIDEVICEOBJECTDATA), NULL, &flushCount, 0);
