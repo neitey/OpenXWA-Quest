@@ -32,11 +32,9 @@ This app includes the following third-party software:
 22. AMD FidelityFX SDK (FSR 3) - MIT
 23. Liberation Sans Bold Italic font, version 2.1.5 (Google Corporation, Red Hat, Inc.) - SIL Open Font License 1.1
 
-It also includes the following third-party 3D models (not open source; used
-with permission):
+It also includes the following third-party 3D models (not open source):
 
-24. 3D cockpits from X-Wing Revival by Raptor007 (Blair Sherman), included
-    with his permission; the models are originally by the X-Wing Alliance
+24. 3D cockpits by Raptor007 (X-Wing Revival) and the X-Wing Alliance
     Upgrade team. Optional, off by default.
 
 ------------------------------------------------------------------------------
@@ -1293,16 +1291,15 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 24. 3D cockpits from X-Wing Revival
 https://www.raptor007.com/x-wing-revival/
 
-3D cockpits from X-Wing Revival (https://www.raptor007.com/x-wing-revival/)
-by Raptor007 (Blair Sherman), included with his permission; the models are
-originally by the X-Wing Alliance Upgrade team (https://xwaupgrade.com/).
+3D cockpits by Raptor007 (X-Wing Revival) and the X-Wing Alliance Upgrade
+team (https://xwaupgrade.com/).
 
 They are optional and off by default: VR Options -> Cockpit Model ->
 X-Wing Revival shows them, for the X-, Y-, A- and B-wing, TIE Fighter, TIE
 Interceptor, TIE Bomber and the YT-1300 / Millennium Falcon; X-Wing
 Alliance's own cockpits are the default. Shipped converted for the game as
 assets/revival_cockpits/*.glb. The models are not covered by the GNU GPL
-or by any other licence in this file; they are included by permission.
+or by any other licence in this file.
 
 ------------------------------------------------------------------------------
 Apache License 2.0

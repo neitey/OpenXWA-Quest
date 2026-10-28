@@ -3205,40 +3205,83 @@ static void fl_hyper_build_tunnel_view(const AeronSceneCamera* camera, const flo
  * as ordinary flight, but mirrors its own classic gate: cockpitVisible alone
  * selects the cockpit inside the special-mode branch. */
 /* VR seat offsets: in some cockpits the pilot's eye point puts a strut or
- * frame right over the aiming reticle. There the cockpit model moves the
- * other way, so the player sits that far to the side (metres of real head
- * movement; x right). Pilot seat only, stereo only. */
+ * frame right over the aiming reticle, or sits too far back from the
+ * window. There the cockpit model moves the other way, so the player sits
+ * that far to the side or forward (metres of real head movement; x right,
+ * forward towards the window). Pilot seat only, stereo only.
+ * XWA_XR_SEAT_FORWARD_<COCKPIT> (the cockpit model's name in capitals,
+ * letters and digits only) overrides the forward offset. */
 static const struct {
-	uint16_t object_type;
+	uint16_t object_type; /* 0: any craft in that cockpit */
+	const char* cockpit;  /* NULL: any cockpit of that craft */
 	float x_m;
+	float forward_m;
 } k_xr_seat_shift[] = {
 	/* YT-1300 (the Sabra of the first mission, "Aeron's Lesson"): 20 cm
 	 * left for a clear view of the reticle. */
-	{ OBJ_CorellianTransport2, -0.20f },
+	{ OBJ_CorellianTransport2, NULL, -0.20f, 0.0f },
+	/* The TIE cockpits: 30 cm closer to the window. */
+	{ 0, "TIECOCKPIT", 0.0f, 0.30f },
+	{ 0, "TIEBOMBERCOCKPIT", 0.0f, 0.30f },
 };
 
 static int fl_xr_stereo_eligible(const XwaFlightCamera* cam);
 static float fl_xr_env(const char* name, float fallback);
+static int fl_name_matches(const char* name, const char* key);
+
+/* The seat offset for this cockpit (metres of real head movement). */
+static void fl_xr_seat_offset(const XwaSnapshot* snap, float* x_m, float* forward_m) {
+	*x_m = *forward_m = 0.0f;
+	for (size_t i = 0; i < sizeof k_xr_seat_shift / sizeof k_xr_seat_shift[0]; ++i) {
+		if ((k_xr_seat_shift[i].object_type && k_xr_seat_shift[i].object_type != snap->hud.instruments.player_object_type) ||
+			(k_xr_seat_shift[i].cockpit && !fl_name_matches(snap->cockpit.model_name, k_xr_seat_shift[i].cockpit))) {
+			continue;
+		}
+		*x_m += k_xr_seat_shift[i].x_m;
+		*forward_m += k_xr_seat_shift[i].forward_m;
+	}
+	char key[96] = "XWA_XR_SEAT_FORWARD_";
+	size_t n = strlen(key);
+	for (const char* c = snap->cockpit.model_name; *c && n + 1 < sizeof key; ++c) {
+		if (isalnum((unsigned char)*c)) {
+			key[n++] = (char)toupper((unsigned char)*c);
+		}
+	}
+	key[n] = '\0';
+	*forward_m = fl_xr_env(key, *forward_m);
+}
 
 static void fl_xr_seat_shift(const XwaSnapshot* snap, float m[16]) {
 	if (!snap || snap->cockpit.seat != 0 || !fl_xr_stereo_eligible(&snap->flight_camera)) {
 		return;
 	}
-	float x = 0.0f;
-	for (size_t i = 0; i < sizeof k_xr_seat_shift / sizeof k_xr_seat_shift[0]; ++i) {
-		if (k_xr_seat_shift[i].object_type == snap->hud.instruments.player_object_type) {
-			x = k_xr_seat_shift[i].x_m;
-		}
-	}
-	if (x == 0.0f) {
+	float x, forward;
+	fl_xr_seat_offset(snap, &x, &forward);
+	if (x == 0.0f && forward == 0.0f) {
 		return;
 	}
-	/* The model moves opposite to the seat, along its own x (the matrix
-	 * already scales metres to world units). */
-	const float d = -x * fl_xr_env("XWA_XR_WORLD_SCALE", 1.0f);
-	m[3] += m[0] * d;
-	m[7] += m[4] * d;
-	m[11] += m[8] * d;
+	/* The model moves opposite to the seat along its own axes (the matrix
+	 * already scales metres to world units): x right, -y forward (OPT). */
+	const float ws = fl_xr_env("XWA_XR_WORLD_SCALE", 1.0f);
+	const float dx = -x * ws, dy = forward * ws;
+	m[3] += m[0] * dx + m[1] * dy;
+	m[7] += m[4] * dx + m[5] * dy;
+	m[11] += m[8] * dx + m[9] * dy;
+}
+
+/* The same forward offset for an X-Wing Revival cockpit in place of XWA's
+ * (out: XwaVrRevivalCockpit_Matrix's; xwa_m: the XWA cockpit's matrix, whose
+ * y column points backwards). The sideways one stays XWA's own. */
+static void fl_xr_revival_seat_shift(const XwaSnapshot* snap, const float xwa_m[16], float out[16]) {
+	float x, forward;
+	fl_xr_seat_offset(snap, &x, &forward);
+	if (forward == 0.0f) {
+		return;
+	}
+	const float dy = forward * fl_xr_env("XWA_XR_WORLD_SCALE", 1.0f);
+	out[3] += xwa_m[1] * dy;
+	out[7] += xwa_m[5] * dy;
+	out[11] += xwa_m[9] * dy;
 }
 
 /* VR: cockpits drawn a little smaller than the game's scale, about the
@@ -3346,6 +3389,7 @@ static void fl_submit_hyperspace_cockpit(AeronCommandBuffer* cmd, XwaRemasterAss
 		float xwa_m[16];
 		fl_model_matrix(anchor_bw, s.camera_local, xwa_m);
 		XwaVrRevivalCockpit_Matrix(xwa_m, s.camera_local, inst.transform);
+		fl_xr_revival_seat_shift(snap, xwa_m, inst.transform);
 		memcpy(inst.prev_transform, inst.transform, sizeof inst.transform);
 		inst.base_color_emissive_strength = fl_xr_cockpit_bloom_cap(1);
 		inst.zero_velocity = 1;
@@ -5313,6 +5357,7 @@ AeronTexture* XwaRemasterFlight_Render(AeronCommandBuffer* cmd, const XwaSnapsho
 		float xwa_m[16];
 		fl_cockpit_model_matrix(&snap->cockpit, cockpit_anchor, s.crows, s.camera_local, xwa_m);
 		XwaVrRevivalCockpit_Matrix(xwa_m, s.camera_local, inst.transform);
+		fl_xr_revival_seat_shift(snap, xwa_m, inst.transform);
 		memcpy(inst.prev_transform, inst.transform, sizeof inst.transform);
 		inst.base_color_emissive_strength = fl_xr_cockpit_bloom_cap(stereo);
 		inst.zero_velocity = 1;
