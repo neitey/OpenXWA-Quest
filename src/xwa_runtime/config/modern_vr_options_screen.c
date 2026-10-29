@@ -52,6 +52,7 @@ enum {
 	VR_STICK_TWIST,
 	VR_STICK_CURVE,
 	VR_INVERT_PITCH,
+	VR_INVERT_VSTICK,
 	VR_HANDED,
 	VR_SWAP_STICKS,
 	VR_VOICE,
@@ -159,6 +160,8 @@ static const VrSetting k_settings[VR_COUNT] = {
 	 * deflection still turns at full rate. */
 	{ "XWA_XR_STICK_CURVE", "Stick Response", k_curve_texts, k_curve_values, 4, 2, 62, 0 },
 	{ "AERON_XR_INVERT_PITCH", "Invert Thumbstick Pitch", k_toggle_texts, k_toggle_values, 2, 0, 97, 0 },
+	/* The same for the grabbed flight stick: pulled back = nose down. */
+	{ "AERON_XR_INVERT_VSTICK_PITCH", "Invert Virtual Stick Pitch", k_toggle_texts, k_toggle_values, 2, 0, 64, 0 },
 	/* Mirrors the controllers' game roles (the flight stick stays right). */
 	{ "AERON_XR_LEFT_HANDED", "Controls", k_hand_texts, k_toggle_values, 2, 0, 75, 0 },
 	/* Swaps what the two thumbsticks do in flight; buttons stay where they
@@ -469,6 +472,7 @@ static const struct {
 	{ "XWA_XR_SHIP_3D", "0.5" },
 	{ "XWA_XR_SIDE_PANEL", "1" },
 	{ "AERON_XR_INVERT_PITCH", "0" },
+	{ "AERON_XR_INVERT_VSTICK_PITCH", "0" },
 	{ "XWA_XR_STICK_CURVE", "2.0" },
 	{ "XWA_XR_HANDS", "controllers" },
 	{ "XWA_XR_COCKPIT_MODEL", "xwa" },
@@ -528,7 +532,7 @@ static void vr_draw_setting(XwaModernOptionsMenu* menu, int i, int page) {
 	const VrSetting* setting = &k_settings[i];
 	/* The helmet HUD size only applies to the helmet layout. */
 	const int disabled = (i == VR_HUD_SIZE && g_vr.index[VR_HUD_LAYOUT] != 1) ||
-						 (i == VR_STICK_TWIST && g_vr.index[VR_FLIGHT_STICK] == 0) ||
+						 ((i == VR_STICK_TWIST || i == VR_INVERT_VSTICK) && g_vr.index[VR_FLIGHT_STICK] == 0) ||
 						 (i == VR_WHEEL_SLOWMO && g_vr.index[VR_WHEEL] == 0);
 	uint8_t value = g_vr.index[i];
 	const int changed =
@@ -569,7 +573,7 @@ static const int k_main_layout[] = {
 	VR_COCKPIT_MODEL, VR_SEAT,		  VR_WORLD_SCALE,  VR_DEPTH_BOOST,  VR_HUD_LAYOUT, VR_HUD_SIZE,
 	VR_CONSOLE,		  VR_SIDE_PANEL,  VR_ACT_RESET,	   VR_GAP,
 	VR_ACT_REMAP,	  VR_HANDED,	  VR_SWAP_STICKS,  VR_STICK_CURVE,  VR_INVERT_PITCH, VR_FLIGHT_STICK,
-	VR_STICK_TWIST,	  VR_HANDS,		  VR_CONTROLLER_LABELS, VR_WHEEL,  VR_WHEEL_SLOWMO, VR_VOICE,
+	VR_STICK_TWIST,	  VR_INVERT_VSTICK, VR_HANDS,		  VR_CONTROLLER_LABELS, VR_WHEEL,  VR_WHEEL_SLOWMO, VR_VOICE,
 	VR_ACT_VOICE,	  VR_GAP,
 	VR_ENVIRONMENT,	  VR_ACT_PERF,	  VR_ACT_BACK,
 };

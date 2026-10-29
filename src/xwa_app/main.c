@@ -576,6 +576,8 @@ static void android_load_settings(void) {
 				  "#XWA_XR_STICK_CURVE=2.0\n"
 				  "# 1 = right thumbstick back pushes the nose down (inverted pitch):\n"
 				  "#AERON_XR_INVERT_PITCH=0\n"
+				  "# 1 = the grabbed virtual flight stick pulled back pushes the nose down:\n"
+				  "#AERON_XR_INVERT_VSTICK_PITCH=0\n"
 				  "# 1 = left-handed controls: the controllers trade roles (sticks,\n"
 				  "# triggers, grips, A/B with X/Y); the flight stick stays on the right:\n"
 				  "#AERON_XR_LEFT_HANDED=0\n"
