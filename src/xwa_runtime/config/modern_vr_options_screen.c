@@ -161,7 +161,7 @@ static const VrSetting k_settings[VR_COUNT] = {
 	{ "XWA_XR_STICK_CURVE", "Stick Response", k_curve_texts, k_curve_values, 4, 2, 62, 0 },
 	{ "AERON_XR_INVERT_PITCH", "Invert Thumbstick Pitch", k_toggle_texts, k_toggle_values, 2, 0, 97, 0 },
 	/* The same for the grabbed flight stick: pulled back = nose down. */
-	{ "AERON_XR_INVERT_VSTICK_PITCH", "Invert Virtual Stick Pitch", k_toggle_texts, k_toggle_values, 2, 0, 64, 0 },
+	{ "AERON_XR_INVERT_VSTICK_PITCH", "Invert Virtual Stick Pitch", k_toggle_texts, k_toggle_values, 2, 0, 91, 0 },
 	/* Mirrors the controllers' game roles (the flight stick stays right). */
 	{ "AERON_XR_LEFT_HANDED", "Controls", k_hand_texts, k_toggle_values, 2, 0, 75, 0 },
 	/* Swaps what the two thumbsticks do in flight; buttons stay where they
@@ -682,10 +682,11 @@ int XwaModernVrOptionsScreen_Update(int menu_center_x, int* cursor_row) {
 		}
 		return 0;
 	}
-	/* The longest page: it starts higher and its action rows are 14 px, so
-	 * Back stays above the clip at y 435. */
+	/* The longest page: it starts higher and its rows are 19 px, so Back
+	 * stays above the clip at y 435. */
 	XwaModernOptionsMenu_Begin(&menu, menu_center_x, 28, cursor_row, vr_main_row(VR_ACT_BACK) + 1);
 	XwaModernOptionsMenu_DrawTitle(&menu, "VR Options");
+	menu.row_height = 19;
 	back = 0;
 	for (int e = 0; e < VR_MAIN_LAYOUT_COUNT; ++e) {
 		const int entry = k_main_layout[e];

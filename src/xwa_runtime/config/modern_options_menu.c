@@ -57,7 +57,7 @@ static int XwaModernOptionsMenu_DrawValueImpl(XwaModernOptionsMenu* menu, const 
 			menu->key = 0;
 		}
 	}
-	menu->y += XWA_MODERN_MENU_ROW_HEIGHT;
+	menu->y += menu->row_height;
 	++menu->row;
 	return result;
 }
@@ -90,6 +90,7 @@ int XwaModernOptionsMenu_Begin(XwaModernOptionsMenu* menu, int center_x, int sta
 	menu->row = 0;
 	menu->cursor_row = *cursor_row;
 	menu->key = key;
+	menu->row_height = XWA_MODERN_MENU_ROW_HEIGHT;
 	return 1;
 }
 
@@ -103,7 +104,7 @@ void XwaModernOptionsMenu_DrawTitle(XwaModernOptionsMenu* menu, const char* titl
 	width = FrontendText_MeasureWidth(title, 20);
 	left = menu->center_x - (int)(width >> 1);
 	FrontendDraw_Line(left, menu->y + 17, left + (int)width, menu->y + 17, g_colorLightBlue);
-	menu->y += XWA_MODERN_MENU_ROW_HEIGHT;
+	menu->y += menu->row_height;
 }
 
 int XwaModernOptionsMenu_DrawAction(XwaModernOptionsMenu* menu, const char* text, int button_id,
@@ -128,7 +129,7 @@ int XwaModernOptionsMenu_DrawAction(XwaModernOptionsMenu* menu, const char* text
 			}
 		}
 	}
-	menu->y += XWA_MODERN_MENU_ROW_HEIGHT;
+	menu->y += menu->row_height;
 	++menu->row;
 	return pressed;
 }
@@ -249,7 +250,7 @@ int XwaModernOptionsMenu_DrawSliderU8(XwaModernOptionsMenu* menu, uint8_t* value
 		*value = (uint8_t)notch_count;
 	}
 
-	menu->y += XWA_MODERN_MENU_ROW_HEIGHT;
+	menu->y += menu->row_height;
 	++menu->row;
 	return *value != old_value;
 }
