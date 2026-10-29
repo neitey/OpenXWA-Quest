@@ -1,4 +1,5 @@
 #include "xwa_runtime/runtime/vr_buttons.h"
+#include <SDL3/SDL_stdinc.h>
 
 #include "xwa/flight/flight.h"
 #include "xwa_runtime/runtime/vr_mapping.h"
@@ -140,7 +141,7 @@ void XwaVrButtons_SlotText(AeronXrButton button, int alt, char* out, size_t size
 	const int fn = XwaVrButtons_Function(button, alt);
 	const XwaVrFunction* f = XwaVrMap_FunctionInfo(fn);
 	const int grip = button == AERON_XR_BUTTON_LEFT_GRIP || button == AERON_XR_BUTTON_RIGHT_GRIP;
-	const char* voice = getenv("XWA_XR_VOICE");
+	const char* voice = SDL_getenv("XWA_XR_VOICE");
 	switch (f->kind) {
 		case XWA_VRF_KIND_NONE:
 			return;
@@ -249,7 +250,7 @@ uint16_t XwaVrButtons_ConsoleKey(XwaVrConsoleAction action) {
 }
 
 int XwaVrButtons_SticksSwapped(void) {
-	const char* value = getenv("XWA_XR_SWAP_STICKS");
+	const char* value = SDL_getenv("XWA_XR_SWAP_STICKS");
 	return value && value[0] == '1';
 }
 

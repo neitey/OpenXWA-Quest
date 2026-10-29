@@ -1,6 +1,7 @@
 /* Flight-scene HD driver — see xwa_remaster/flight.h. */
 
 #include "xwa_remaster/flight.h"
+#include <SDL3/SDL_stdinc.h>
 
 #include "aeron/aeron.h"
 #include "aeron/config_file.h"
@@ -722,7 +723,7 @@ int XwaRemasterFlight_InitConfig(AeronVfs* vfs) {
 	{
 		/* XWA_POINT_LIGHTS=0/1 overrides the config (the Quest profile turns
 		 * them off: per-pixel point lights in both eyes saturate its GPU). */
-		const char* env = getenv("XWA_POINT_LIGHTS");
+		const char* env = SDL_getenv("XWA_POINT_LIGHTS");
 		if (env && (env[0] == '0' || env[0] == '1')) {
 			s.plight.enabled = env[0] == '1';
 		}
@@ -1137,7 +1138,7 @@ static int fl_apply_texture_filtering(const XwaFlightTextureFilteringParams* in)
 	 * uncompressed atlases per pixel. 1 = plain trilinear. */
 	float max_aniso = in->max_anisotropy;
 	{
-		const char* cap = getenv("XWA_XR_ANISOTROPY");
+		const char* cap = SDL_getenv("XWA_XR_ANISOTROPY");
 		const float c = cap && cap[0] ? (float)atof(cap) : 0.0f;
 		if (c >= 1.0f && c < max_aniso) {
 			max_aniso = c;
@@ -3921,7 +3922,7 @@ static void fl_build_scene_lighting(const XwaSnapshot* snap, const XwaFlightCame
 		 * little or no directional light, so their pipes and trenches went
 		 * near black. Raise the ambient floor (XWA_DS_AMBIENT_BOOST, 2.2;
 		 * 1 = as before). */
-		const char* env = getenv("XWA_DS_AMBIENT_BOOST");
+		const char* env = SDL_getenv("XWA_DS_AMBIENT_BOOST");
 		const float boost = env && env[0] ? (float)atof(env) : 2.2f;
 		if (boost > 1.0f && boost < 10.0f) {
 			XwaRemasterShip_GetAmbientCube(&out->ambient_cube);
@@ -4079,7 +4080,7 @@ static AeronScenePresentChain* s_xr_present;
 static AeronTextureFormat s_xr_present_format = AERON_TEXTURE_FORMAT_UNKNOWN;
 
 static float fl_xr_env(const char* name, float fallback) {
-	const char* value = getenv(name);
+	const char* value = SDL_getenv(name);
 	if (value && value[0]) {
 		const float parsed = (float)atof(value);
 		if (parsed > 0.0f) {
@@ -4097,13 +4098,13 @@ static float fl_xr_depth_boost(void) {
 }
 
 static int fl_xr_stereo_eligible(const XwaFlightCamera* cam) {
-	const char* env = getenv("XWA_XR_STEREO");
+	const char* env = SDL_getenv("XWA_XR_STEREO");
 	if (env && env[0] == '0') {
 		return 0;
 	}
 	/* Hyperspace renders per eye too (fl_render_hyperspace); XWA_XR_HYPER_STEREO=0
 	 * keeps the old flat-screen jump. */
-	const char* hyper = getenv("XWA_XR_HYPER_STEREO");
+	const char* hyper = SDL_getenv("XWA_XR_HYPER_STEREO");
 	const int hyper_ok = !(hyper && hyper[0] == '0');
 	return cam && !cam->map_mode && (hyper_ok || (!cam->hyperspace_phase && !s.hyperspace_preview)) &&
 		   !cam->film_overlay;
@@ -4237,7 +4238,7 @@ static struct {
 
 static int fl_prof_on(void) {
 	if (!s_fl_prof.checked) {
-		const char* env = getenv("XWA_XR_CPU_PROFILE");
+		const char* env = SDL_getenv("XWA_XR_CPU_PROFILE");
 		s_fl_prof.on = !(env && env[0] == '0');
 		s_fl_prof.checked = 1;
 	}
@@ -4315,7 +4316,7 @@ static int fl_xr_hud_layer(const AeronXrHudQuad* q, const AeronXrView* head, Aer
  * tonemapped colour straight into the headset images (no HDR
  * intermediate, no separate tonemap pass, no bloom); 0 = the HDR path. */
 static int fl_xr_direct_output(void) {
-	const char* env = getenv("XWA_XR_DIRECT_OUTPUT");
+	const char* env = SDL_getenv("XWA_XR_DIRECT_OUTPUT");
 	return env && env[0] == '1';
 }
 
@@ -4324,7 +4325,7 @@ static int fl_xr_direct_output(void) {
  * show in it, and it saves the whole bloom chain (a dozen small passes) for
  * the right eye. "eye" = per eye, 0 = no bloom in VR. */
 static int fl_xr_bloom_mode(void) {
-	const char* env = getenv("XWA_XR_BLOOM");
+	const char* env = SDL_getenv("XWA_XR_BLOOM");
 	if (env && env[0] == '0') {
 		return 0;
 	}
@@ -4504,8 +4505,8 @@ static int fl_xr_output_hud(AeronCommandBuffer* cmd, AeronRenderTarget* target, 
 enum { FL_XR_HUD_COCKPIT, FL_XR_HUD_HELMET, FL_XR_HUD_FIXED };
 
 static int fl_xr_hud_layout(void) {
-	const char* layout = getenv("XWA_XR_HUD_LAYOUT");
-	const char* headlock = getenv("XWA_XR_HUD_HEADLOCK");
+	const char* layout = SDL_getenv("XWA_XR_HUD_LAYOUT");
+	const char* headlock = SDL_getenv("XWA_XR_HUD_HEADLOCK");
 	if (layout && strcmp(layout, "helmet") == 0) {
 		return FL_XR_HUD_HELMET;
 	}
@@ -4538,7 +4539,7 @@ static void fl_xr_hud_quad(const AeronSceneCamera* base, AeronXrHudQuad* out, in
 	if (head) {
 		const float d = fl_xr_env("XWA_XR_HUD_DISTANCE", 3.0f);
 		const float scale = fl_xr_env("XWA_XR_HUD_SCALE", 0.65f);
-		const char* smooth = getenv("XWA_XR_HUD_SMOOTH");
+		const char* smooth = SDL_getenv("XWA_XR_HUD_SMOOTH");
 		out->size[0] = 2.0f * d * th * scale;
 		out->size[1] = 2.0f * d * tv * scale;
 		out->position[2] = -d;
@@ -4568,7 +4569,7 @@ static void fl_xr_hud_quad(const AeronSceneCamera* base, AeronXrHudQuad* out, in
  * backdrops so planets cover them. XWA_XR_STARS=shader restores the GPU
  * pass. */
 static int fl_xr_star_sprites(void) {
-	const char* env = getenv("XWA_XR_STARS");
+	const char* env = SDL_getenv("XWA_XR_STARS");
 	return !(env && strcmp(env, "shader") == 0);
 }
 
@@ -4659,7 +4660,7 @@ static void fl_submit_vr_stars(const XwaRemasterSkyStarsParams* params, const Ae
 /* XWA_POINT_LIGHTS can change at runtime (VR options screen): follow it. */
 static void fl_point_lights_env_refresh(void) {
 	static char last;
-	const char* env = getenv("XWA_POINT_LIGHTS");
+	const char* env = SDL_getenv("XWA_POINT_LIGHTS");
 	const char c = env && (env[0] == '0' || env[0] == '1') ? env[0] : 0;
 	if (c != last) {
 		last = c;
@@ -4908,7 +4909,7 @@ AeronTexture* XwaRemasterFlight_Render(AeronCommandBuffer* cmd, const XwaSnapsho
 	/* XWA_XR_SHADOWS=0 (Quest profile default) disables directional shadows
 	 * in stereo. When enabled, the cascades render once per frame and both
 	 * eyes sample them (AeronScene_SetShadowReuse). */
-	const char* xr_shadows = getenv("XWA_XR_SHADOWS");
+	const char* xr_shadows = SDL_getenv("XWA_XR_SHADOWS");
 	const int shadows_allowed = !(stereo && xr_shadows && xr_shadows[0] == '0');
 	const int shadows_active =
 		shadows_allowed && !cam->death_star_mode && s.shadows.enabled &&
@@ -5480,8 +5481,8 @@ AeronTexture* XwaRemasterFlight_Render(AeronCommandBuffer* cmd, const XwaSnapsho
 	 * near meshes first, sky and stars last behind them. Same image. The
 	 * hyperspace hook does not depth-test, so it keeps drawing first. */
 	{
-		const char* order_env = getenv("XWA_XR_DRAW_ORDER");
-		const char* opt_env   = getenv("XWA_XR_GPU_OPT");
+		const char* order_env = SDL_getenv("XWA_XR_DRAW_ORDER");
+		const char* opt_env   = SDL_getenv("XWA_XR_GPU_OPT");
 		const int   reorder   = stereo && !(order_env && order_env[0] == '0') && !(opt_env && opt_env[0] == '0');
 		AeronScene_SetOpaqueOrder(s.scene, reorder && s.before_opaque_mode != FL_BEFORE_OPAQUE_HYPERSPACE,
 								  reorder);
@@ -5512,7 +5513,7 @@ AeronTexture* XwaRemasterFlight_Render(AeronCommandBuffer* cmd, const XwaSnapsho
 		/* Left eye out, then re-render the same submissions for the right eye.
 		 * The right eye reuses the left eye's shadow atlas unless
 		 * XWA_XR_SHADOW_REUSE=0. */
-		const char* shadow_reuse = getenv("XWA_XR_SHADOW_REUSE");
+		const char* shadow_reuse = SDL_getenv("XWA_XR_SHADOW_REUSE");
 		AeronScene_SetShadowReuse(s.scene, !(shadow_reuse && shadow_reuse[0] == '0'));
 		s_xr_eye_alpha = s_xr_hands_over && !direct_used[0] ? XwaVrHandOverlay_List(0) : NULL;
 		const int left_out = direct_used[0] || fl_xr_output_eye(cmd, xr_frame.eye_targets[0], xr_frame.format, NULL);

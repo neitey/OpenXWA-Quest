@@ -1,4 +1,5 @@
 #include "xwa_remaster/vr_hand_overlay.h"
+#include <SDL3/SDL_stdinc.h>
 
 #include <math.h>
 #include <stdlib.h>
@@ -121,7 +122,7 @@ static struct {
 static int hv_enabled(void) {
 	static int checked, enabled;
 	if (!checked) {
-		const char* env = getenv("XWA_XR_HANDS_OVER_SCREEN");
+		const char* env = SDL_getenv("XWA_XR_HANDS_OVER_SCREEN");
 		enabled = !(env && env[0] == '0');
 		checked = 1;
 	}
@@ -133,7 +134,7 @@ static int hv_enabled(void) {
 static int hv_crop(void) {
 	static int checked, crop;
 	if (!checked) {
-		const char* env = getenv("XWA_XR_HANDS_OVERLAY_CROP");
+		const char* env = SDL_getenv("XWA_XR_HANDS_OVERLAY_CROP");
 		crop = !(env && env[0] == '0');
 		checked = 1;
 	}
@@ -548,7 +549,7 @@ static int SDLCALL hv_thread_main(void* arg) {
 static int hv_thread_ready(void) {
 	if (s_hv.thread_state == 0) {
 		s_hv.thread_state = -1;
-		const char* env = getenv("XWA_XR_HANDS_OVERLAY_THREAD");
+		const char* env = SDL_getenv("XWA_XR_HANDS_OVERLAY_THREAD");
 		if (env && env[0] == '0') {
 			return 0;
 		}

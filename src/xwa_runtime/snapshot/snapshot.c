@@ -8,6 +8,7 @@
  */
 
 #include "xwa_runtime/snapshot/snapshot.h"
+#include <SDL3/SDL_stdinc.h>
 #include "xwa_runtime/snapshot/snapshot_flight_map.h"
 #include "xwa_runtime/snapshot/snapshot_hud.h"
 
@@ -339,7 +340,7 @@ static int g_dump_tick_count = -1; /* -1 = env not parsed yet */
 static void snapshot_maybe_dump(const XwaSnapshot* s) {
 	if (g_dump_tick_count < 0) {
 		g_dump_tick_count = 0;
-		const char* env = getenv("XWA_SNAPSHOT_DUMP_TICK");
+		const char* env = SDL_getenv("XWA_SNAPSHOT_DUMP_TICK");
 		while (env && *env && g_dump_tick_count < 8) {
 			g_dump_ticks[g_dump_tick_count++] = atoi(env);
 			env = strchr(env, ',');

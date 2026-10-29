@@ -11,6 +11,7 @@
  * the rest is baked. Base colour textures are packed into one atlas. */
 
 #include "xwa_remaster/vr_controllers.h"
+#include <SDL3/SDL_stdinc.h>
 #include "xwa_remaster/vr_ktx2_decode.h"
 
 #include "aeron/aeron.h"
@@ -1741,7 +1742,7 @@ static int ct_reserve_local(CtHand* h, uint32_t vn) {
 }
 
 static int ct_runtime_wanted(void) {
-	const char* env = getenv("XWA_XR_CONTROLLER_MODEL");
+	const char* env = SDL_getenv("XWA_XR_CONTROLLER_MODEL");
 	return !(env && (env[0] == 'g' || env[0] == '0')); /* "generic" / 0: ours always */
 }
 

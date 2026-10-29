@@ -686,12 +686,12 @@ static struct {
 } s_env;
 
 static float env_float(const char* name, float fallback) {
-	const char* v = getenv(name);
+	const char* v = SDL_getenv(name);
 	return v && v[0] ? (float)atof(v) : fallback;
 }
 
 static EnvMode env_mode(void) {
-	const char* v = getenv("XWA_XR_ENVIRONMENT");
+	const char* v = SDL_getenv("XWA_XR_ENVIRONMENT");
 	if (v && strcmp(v, "0") == 0) {
 		return ENV_OFF;
 	}
@@ -1038,7 +1038,7 @@ int XwaVrEnv_SpaceLighting(XwaVrEnvLighting* out) {
 }
 
 static const char* env_craft(void) {
-	const char* v = getenv("XWA_XR_ENV_CRAFT");
+	const char* v = SDL_getenv("XWA_XR_ENV_CRAFT");
 	if (v) {
 		return v[0] && strcmp(v, "0") != 0 ? v : NULL;
 	}
@@ -1575,7 +1575,7 @@ static int env_make_planet(AeronCommandBuffer* cmd) {
  *           TIE Fighter scene (XWA_XR_TIE_PILOT, XWA_XR_REBEL_PILOT), the
  *           rebel looking left, vignetted to transparent at the edges. */
 static int env_load_rgba(AeronCommandBuffer* cmd, int slot, const char* name, const char* override_env) {
-	const char* override = getenv(override_env);
+	const char* override = SDL_getenv(override_env);
 	if (override && strcmp(override, "0") == 0) {
 		return 0;
 	}
@@ -1817,7 +1817,7 @@ void XwaVrEnv_View(float pos[3], float rows[9]) {
 	 * way the parked craft points; positive turns right). The space scene
 	 * is laid out around the viewer at the origin. */
 	float x = -500.0f, y = -1150.0f, yaw = 0.0f, eye = 1.7f;
-	const char* v = getenv("XWA_XR_ENV_VIEW");
+	const char* v = SDL_getenv("XWA_XR_ENV_VIEW");
 	if (env_is_space(s_env.mode)) {
 		x = y = 0.0f;
 	} else if (v && v[0]) {
@@ -3052,7 +3052,7 @@ static void bt_last_mission(char out[128]) {
 	extern char g_currentMissionFile[128];
 	AeronVfs* vfs = Aeron_GetVfs();
 	out[0] = 0;
-	const char* force = getenv("XWA_XR_BATTLE_MISSION");
+	const char* force = SDL_getenv("XWA_XR_BATTLE_MISSION");
 	if (force && force[0]) {
 		snprintf(out, 128, "%s", force);
 		return;

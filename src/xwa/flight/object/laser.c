@@ -1,4 +1,5 @@
 #include "xwa/flight/object/laser.h"
+#include <SDL3/SDL_stdinc.h>
 
 #include "xwa/assets/model_bounds.h"
 #include "xwa/assets/model_def.h"
@@ -944,7 +945,7 @@ static __inline uint16_t laser_ComputeLauncherCooldownTicks(ModelIndex modelInde
 			 * XWA_ORIGINAL_VETERAN_FIRE=1 keeps the original. */
 			static int original = -1;
 			if (original < 0) {
-				const char* env = getenv("XWA_ORIGINAL_VETERAN_FIRE");
+				const char* env = SDL_getenv("XWA_ORIGINAL_VETERAN_FIRE");
 				original = env && env[0] == '1';
 			}
 			if (!original) {

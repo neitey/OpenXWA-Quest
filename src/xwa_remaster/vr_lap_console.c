@@ -1,6 +1,7 @@
 /* VR lap console; see vr_lap_console.h. */
 
 #include "xwa_remaster/vr_lap_console.h"
+#include <SDL3/SDL_stdinc.h>
 
 #include "aeron/aeron.h"
 #include "aeron/log.h"
@@ -284,14 +285,14 @@ static void vc_qnorm(float q[4]) {
 }
 
 static float vc_env(const char* name, float fallback) {
-	const char* v = getenv(name);
+	const char* v = SDL_getenv(name);
 	return v && v[0] ? (float)atof(v) : fallback;
 }
 
 /* The hand-placed pose from XWA_XR_CONSOLE_POSE ("x,y,z,qx,qy,qz,qw";
  * empty = the default spot), read again whenever it changes. */
 static void vc_read_pose_env(void) {
-	const char* v = getenv("XWA_XR_CONSOLE_POSE");
+	const char* v = SDL_getenv("XWA_XR_CONSOLE_POSE");
 	if (!v) {
 		v = "";
 	}
@@ -1398,7 +1399,7 @@ void XwaVrConsole_SetState(const XwaVrConsoleState* state) {
 }
 
 static int vc_enabled(void) {
-	const char* env = getenv("XWA_XR_CONSOLE");
+	const char* env = SDL_getenv("XWA_XR_CONSOLE");
 	return !(env && env[0] == '0');
 }
 
@@ -1798,7 +1799,7 @@ static const char* const k_vw_levels[5] = { "off", "low", "normal", "high", "max
 static const char* const k_vw_balance[3] = { "front", "even", "rear" };
 
 static int vw_enabled(void) {
-	const char* env = getenv("XWA_XR_WHEEL");
+	const char* env = SDL_getenv("XWA_XR_WHEEL");
 	return !(env && (env[0] == '0' || env[0] == 'o' || env[0] == 'O'));
 }
 
@@ -2358,7 +2359,7 @@ static void lb_norm(float v[3]) {
 }
 
 static int lb_enabled(void) {
-	const char* env = getenv("XWA_XR_CONTROLLER_LABELS");
+	const char* env = SDL_getenv("XWA_XR_CONTROLLER_LABELS");
 	return XwaVrHands_Mode() == XWA_VR_HANDS_CONTROLLERS && !(env && env[0] == '0');
 }
 
@@ -2457,7 +2458,7 @@ static int lb_entries(int hand, const AeronXrHand* xh, LbEntry* out) {
 				break;
 			default: {
 				/* The thumb rest starts voice commands (where it has one). */
-				const char* voice = getenv("XWA_XR_VOICE");
+				const char* voice = SDL_getenv("XWA_XR_VOICE");
 				e->control = "THUMB REST";
 				ok = Aeron_XrThumbrestTouch(hand) >= 0 &&
 					 !(voice && (voice[0] == '0' || voice[0] == 'o' || voice[0] == 'O'));
@@ -3068,7 +3069,7 @@ static void vc_card_draw(void) {
 	vc_text(W * 0.5f, H - 158.0f, "Flight stick (between your knees): right grip on it = fly, left grip = move it", 17.0f,
 			1, 0.85f, 0.97f, 1.0f, 0.95f);
 	{
-		const char* voice = getenv("XWA_XR_VOICE");
+		const char* voice = SDL_getenv("XWA_XR_VOICE");
 		const char* line =
 			voice && (voice[0] == '0' || voice[0] == 'o' || voice[0] == 'O')
 				? "Voice commands are off (game menu -> VR Options -> Voice Commands)"
@@ -3101,7 +3102,7 @@ static void vc_voice_column(float x, const char* title, const char* const* lines
 static void vc_voice_draw(void) {
 	const float W = s_vc.cur_w_px, H = s_vc.cur_h_px;
 	{
-		const char* mode = getenv("XWA_XR_VOICE");
+		const char* mode = SDL_getenv("XWA_XR_VOICE");
 		const char* how = mode && strcmp(mode, "hold") == 0 ? "hold a thumb rest and speak"
 						  : mode && (mode[0] == '0' || mode[0] == 'o' || mode[0] == 'O')
 							  ? "voice commands are off (VR Options)"
@@ -3124,7 +3125,7 @@ static int vc_card_enabled_kind(int card) {
 	if (card != VC_CARD_BUTTONS) {
 		return 0;
 	}
-	const char* env = getenv("XWA_XR_SIDE_PANEL");
+	const char* env = SDL_getenv("XWA_XR_SIDE_PANEL");
 	return !(env && (env[0] == '0' || env[0] == 'o' || env[0] == 'O'));
 }
 
@@ -3173,9 +3174,9 @@ static void vp_load(void) {
 		return;
 	}
 	s_vp.loaded = 1;
-	const char* legend = getenv("XWA_XR_MAP_LEGEND"); /* 1: open at start (tests) */
+	const char* legend = SDL_getenv("XWA_XR_MAP_LEGEND"); /* 1: open at start (tests) */
 	s_vp.map_help = legend && legend[0] == '1';
-	const char* env = getenv("XWA_XR_PANEL_TAB");
+	const char* env = SDL_getenv("XWA_XR_PANEL_TAB");
 	for (int t = 0; env && t < VP_TABS; ++t) {
 		if (strcmp(env, k_vp_tab_keys[t]) == 0) {
 			s_vp.tab = t;

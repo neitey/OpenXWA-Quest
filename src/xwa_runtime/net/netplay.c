@@ -2,6 +2,7 @@
 #define _DEFAULT_SOURCE /* getaddrinfo, getifaddrs, IFF_* */
 #endif
 #include "xwa_runtime/net/netplay.h"
+#include <SDL3/SDL_stdinc.h>
 
 #include "aeron/log.h"
 #include "aeron/sync.h"
@@ -1456,7 +1457,7 @@ static int np_thread_main(void* user) {
 
 /* Opens the socket and starts the thread. Called with the lock held. */
 static int np_start(uint16_t port) {
-	const char* loss = getenv("XWA_NETPLAY_LOSS");
+	const char* loss = SDL_getenv("XWA_NETPLAY_LOSS");
 
 	g_np.sock = np_open_socket(port);
 	if (g_np.sock == NP_INVALID_SOCKET) {

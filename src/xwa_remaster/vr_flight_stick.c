@@ -1,6 +1,7 @@
 /* VR flight stick; see vr_flight_stick.h. */
 
 #include "xwa_remaster/vr_flight_stick.h"
+#include <SDL3/SDL_stdinc.h>
 
 #include "aeron/aeron.h"
 #include "aeron/log.h"
@@ -134,12 +135,12 @@ static void st_stick_quat(const float d[3], float twist, float q[4]) {
 }
 
 static float st_env(const char* name, float fallback) {
-	const char* v = getenv(name);
+	const char* v = SDL_getenv(name);
 	return v && v[0] ? (float)atof(v) : fallback;
 }
 
 int XwaVrStick_Enabled(void) {
-	const char* env = getenv("XWA_XR_FLIGHT_STICK");
+	const char* env = SDL_getenv("XWA_XR_FLIGHT_STICK");
 	return !(env && env[0] == '0');
 }
 
@@ -150,7 +151,7 @@ static void st_place(void) {
 		return;
 	}
 	memcpy(s_st.pivot, k_default_pivot, sizeof s_st.pivot);
-	const char* v = getenv("XWA_XR_STICK_POS");
+	const char* v = SDL_getenv("XWA_XR_STICK_POS");
 	float p[3];
 	if (v && v[0] && sscanf(v, "%f,%f,%f", &p[0], &p[1], &p[2]) == 3 && fabsf(p[0]) < 2.0f && fabsf(p[1]) < 2.0f &&
 		fabsf(p[2]) < 2.0f) {

@@ -712,7 +712,7 @@ static void hoth_load_boom(AeronCommandBuffer* cmd) {
 static void hoth_load_logo(AeronCommandBuffer* cmd) {
 	static char beside_exe[1024];
 	const char* const paths[3] = { "vr/logo.rgba", "assets/vr/logo.rgba", beside_exe };
-	const char* override = getenv("XWA_XR_LOGO");
+	const char* override = SDL_getenv("XWA_XR_LOGO");
 	beside_exe[0] = '\0';
 #if !defined(SDL_PLATFORM_ANDROID)
 	if (!Aeron_ApplicationPath("vr/logo.rgba", beside_exe, sizeof beside_exe)) {
@@ -989,7 +989,7 @@ int XwaVrIntroHoth_Load(AeronCommandBuffer* cmd) {
 	}
 	if (++s_hoth.step == 1 + HOTH_MESHES) {
 		hoth_build_paths();
-		if (getenv("XWA_XR_HOTH_CHECK")) {
+		if (SDL_getenv("XWA_XR_HOTH_CHECK")) {
 			hoth_check_clearance();
 		}
 		Aeron_LogInfo("xwa.remaster",
