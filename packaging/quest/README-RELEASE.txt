@@ -83,10 +83,6 @@ Controls
   mapping; touch a tab (or point and pull the trigger). Touch the map to
   zoom.
   VR settings and help: game menu -> VR Options.
-  VR Options -> Cockpit Model: X-Wing Alliance's own cockpits (the
-  default) or the optional 3D cockpits from X-Wing Revival, for the
-  crafts that have one (X-, Y-, A-, B-wing, TIE Fighter, Interceptor and
-  Bomber, YT-1300 / Falcon). You can move the HUD panels in either.
 
 
 Problems?
@@ -119,7 +115,5 @@ Licence
 OpenXWA and Neitey's XW: Alliance VR are free software under the GNU GPL
 version 3 (LICENSE.txt). Source: https://github.com/neitey/OpenXWA-Quest
 Third-party components and their licences: THIRD-PARTY-NOTICES.txt.
-3D cockpits by Raptor007 (X-Wing Revival) and the X-Wing Alliance Upgrade
-team; optional and off by default (VR Options -> Cockpit Model).
 Star Wars and X-Wing Alliance are trademarks of their owners; this is an
 unofficial fan project and contains no game data.

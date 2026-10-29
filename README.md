@@ -110,10 +110,6 @@ are in the game menu under **VR Options**. There, **Swap Thumbsticks**
 (`XWA_XR_SWAP_STICKS=1`) trades what the two sticks do in flight (left stick:
 pitch / yaw; right stick: roll, throttle) while every button stays where it
 is; **Controls: Left-handed** mirrors both controllers, buttons included.
-**Cockpit Model** (`XWA_XR_COCKPIT_MODEL`) picks X-Wing Alliance's own
-cockpits (the default) or the optional 3D cockpits from X-Wing Revival for the
-crafts that have one (X-, Y-, A-, B-wing, TIE Fighter, Interceptor and Bomber,
-YT-1300 / Falcon).
 
 ## Problems
 
@@ -136,10 +132,6 @@ OpenXR is part of the same source. The upstream build notes are below.
 - **AI assisted coding:** Neitey
 - **VR design, menu environments & QA:** MarkD
 - **OpenXWA:** Adrien Moulin and contributors
-- **Optional 3D cockpits:** [Raptor007](https://www.raptor007.com/x-wing-revival/)
-  (X-Wing Revival) and the [X-Wing Alliance Upgrade team](https://xwaupgrade.com/).
-  Off by default (VR Options, **Cockpit Model**); not in this repository and
-  not covered by its licence.
 
 VR-specific code was generated using Claude AI; additional artwork was created
 using ChatGPT. Third-party components and their licences are listed in

@@ -2,6 +2,7 @@
 
 #include "aeron/aeron.h"
 #include "aeron/log.h"
+#include "aeron/paths.h"
 #include "xwa/assets/string_table.h"
 #include "xwa_runtime/config/modern_options_menu.h"
 #include "xwa/frontend/frontend_color.h"
@@ -579,11 +580,51 @@ static const int k_main_layout[] = {
 };
 enum { VR_MAIN_LAYOUT_COUNT = (int)(sizeof k_main_layout / sizeof k_main_layout[0]) };
 
-/* The cursor row of a main-page entry (gaps are no row). */
+int XwaModernVrOptions_RevivalCockpitsInstalled(void) {
+	static int s_known, s_installed;
+	static const char* const k_files[] = { "xwing.glb",	 "ywing.glb",		   "awing.glb",		"bwing.glb",
+										   "tiefighter.glb", "tieinterceptor.glb", "tiebomber.glb", "falcon.glb" };
+	if (s_known) {
+		return s_installed;
+	}
+	s_known = 1;
+	char dir[1024];
+	const char* env = SDL_getenv("XWA_XR_REVIVAL_COCKPITS");
+	if (env && env[0]) {
+		SDL_snprintf(dir, sizeof dir, "%s", env);
+	} else {
+#if defined(SDL_PLATFORM_ANDROID)
+		SDL_snprintf(dir, sizeof dir, "revival_cockpits"); /* APK assets */
+#else
+		if (!Aeron_ApplicationPath("revival_cockpits", dir, sizeof dir)) {
+			SDL_snprintf(dir, sizeof dir, "revival_cockpits");
+		}
+#endif
+	}
+	for (size_t i = 0; i < sizeof k_files / sizeof k_files[0] && !s_installed; ++i) {
+		char path[1100];
+		SDL_snprintf(path, sizeof path, "%s/%s", dir, k_files[i]);
+		SDL_IOStream* io = SDL_IOFromFile(path, "rb");
+		if (io) {
+			SDL_CloseIO(io);
+			s_installed = 1;
+		}
+	}
+	Aeron_LogInfo("xwa.config", "X-Wing Revival cockpits %s (%s)", s_installed ? "installed" : "not installed", dir);
+	return s_installed;
+}
+
+/* Rows the main page leaves out: Cockpit Model without the Revival cockpits
+ * (XWA's are then the only ones). */
+static int vr_entry_hidden(int entry) {
+	return entry == VR_COCKPIT_MODEL && !XwaModernVrOptions_RevivalCockpitsInstalled();
+}
+
+/* The cursor row of a main-page entry (gaps and hidden rows are no row). */
 static int vr_main_row(int entry) {
 	int row = 0;
 	for (int i = 0; i < VR_MAIN_LAYOUT_COUNT && k_main_layout[i] != entry; ++i) {
-		row += k_main_layout[i] != VR_GAP;
+		row += k_main_layout[i] != VR_GAP && !vr_entry_hidden(k_main_layout[i]);
 	}
 	return row;
 }
@@ -695,7 +736,9 @@ int XwaModernVrOptionsScreen_Update(int menu_center_x, int* cursor_row) {
 			continue;
 		}
 		if (entry >= 0) {
-			vr_draw_setting(&menu, entry, 0);
+			if (!vr_entry_hidden(entry)) {
+				vr_draw_setting(&menu, entry, 0);
+			}
 			continue;
 		}
 		switch (entry) {

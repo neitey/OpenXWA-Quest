@@ -5,6 +5,7 @@
 #include "xwa/frontend/frontend_draw.h"
 #include "xwa/frontend/frontend_text.h"
 #include "xwa_runtime/config/modern_options_menu.h"
+#include "xwa_runtime/config/modern_vr_options_screen.h"
 
 #include <stddef.h>
 
@@ -15,6 +16,8 @@ typedef struct {
 	CreditStyle style;
 	const char* text;
 } CreditLine;
+
+static const char k_cockpit_heading[] = "Optional Cockpits";
 
 static const CreditLine k_credits[] = {
 	{ CREDIT_TEXT, "Neitey's XW: Alliance VR is based on the open source project" },
@@ -29,8 +32,9 @@ static const CreditLine k_credits[] = {
 	{ CREDIT_HEADING, "Radial Menu" },
 	{ CREDIT_TEXT, "Radial menu code borrowed from Team Beef's JK:Academy VR" },
 	{ CREDIT_GAP, NULL },
-	/* Optional, off by default (VR Options, "Cockpit Model"). */
-	{ CREDIT_HEADING, "Optional Cockpits" },
+	/* Optional, off by default (VR Options, "Cockpit Model"); only when
+	 * they are installed (draw_lines skips the heading, its line and gap). */
+	{ CREDIT_HEADING, k_cockpit_heading },
 	{ CREDIT_TEXT, "Raptor007 (X-Wing Revival) and the XWA Upgrade team" },
 	{ CREDIT_GAP, NULL },
 	{ CREDIT_HEADING, "Disclaimer" },
@@ -67,6 +71,10 @@ static void draw_lines(XwaModernOptionsMenu* menu, const CreditLine* lines, size
 	FrontendRect rect;
 
 	for (size_t i = 0; i < count; ++i) {
+		if (lines[i].text == k_cockpit_heading && !XwaModernVrOptions_RevivalCockpitsInstalled()) {
+			i += 2; /* the heading, its line and the gap after them */
+			continue;
+		}
 		switch (lines[i].style) {
 			case CREDIT_GAP:
 				menu->y += 10;
