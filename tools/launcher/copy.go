@@ -239,7 +239,7 @@ type copyProgress struct {
 }
 
 func newCopyProgress(verb string, files []gameFile) *copyProgress {
-	c := &copyProgress{p: Progress{Label: verb, TotalFiles: len(files), TotalBytes: totalSize(files)}, stop: make(chan struct{})}
+	c := &copyProgress{p: Progress{Label: verb, TotalFiles: len(files), TotalBytes: totalSize(files), Started: time.Now()}, stop: make(chan struct{})}
 	ui.Progress(&c.p)
 	go func() {
 		t := time.NewTicker(250 * time.Millisecond)
@@ -355,8 +355,9 @@ func (a *app) headsetGone() bool {
 	return err != nil || strings.TrimSpace(out) != "device"
 }
 
-var errDisconnected = &userError{msg: "The headset was disconnected. Check the USB cable and run the launcher\n" +
-	"again; it will continue where it stopped and only copy what is missing."}
+var errDisconnected = &userError{msg: "The connection to the headset was lost (USB cable unplugged, or Wi-Fi\n" +
+	"dropped or the headset went to sleep). Check the connection and press Try\n" +
+	"again; it continues where it stopped and only copies what is missing."}
 
 // runPushes runs the jobs with a progress line.
 func (a *app) runPushes(verb string, jobs []pushJob, files []gameFile) error {
@@ -372,8 +373,12 @@ func (a *app) runPushes(verb string, jobs []pushJob, files []gameFile) error {
 		if err != nil || strings.Contains(out, "adb: error") {
 			logf("push of %s reported a problem", j.local)
 			if a.headsetGone() {
-				p.finish()
-				return errDisconnected
+				if !a.waitForHeadset() {
+					p.finish()
+					return errDisconnected
+				}
+				// Continue; the check afterwards copies again whatever this
+				// push did not bring over.
 			}
 		}
 		p.add(j.files)
@@ -491,8 +496,14 @@ func (a *app) copyGame() error {
 func (a *app) copyMissing(files []gameFile) error {
 	say("Checking what is already on the headset...")
 	remote, err := a.listRemote(a.remoteGame())
+	if err != nil && err != errClosed && a.headsetGone() && a.waitForHeadset() {
+		remote, err = a.listRemote(a.remoteGame())
+	}
 	if err != nil {
-		return fail("Could not read the files on the headset (%v).\nCheck the USB cable and try again.", err)
+		if err == errClosed {
+			return err
+		}
+		return fail("Could not read the files on the headset (%v).\nCheck the %s and try again.", err, a.connectionWord())
 	}
 	todo := filesToCopy(files, remote)
 	if len(todo) == 0 {
@@ -540,13 +551,21 @@ func (a *app) copyMissing(files []gameFile) error {
 func (a *app) verifyGame(files []gameFile) error {
 	say("Checking the copied files...")
 	const rounds = 3
+	waits := 0
 	for round := 1; ; round++ {
 		remote, err := a.listRemote(a.remoteGame())
 		if err != nil {
+			if err == errClosed {
+				return err
+			}
 			if a.headsetGone() {
+				if waits++; waits <= 5 && a.waitForHeadset() {
+					round--
+					continue
+				}
 				return errDisconnected
 			}
-			return fail("Could not read the files on the headset (%v).\nCheck the USB cable and try again.", err)
+			return fail("Could not read the files on the headset (%v).\nCheck the %s and try again.", err, a.connectionWord())
 		}
 		bad := filesToCopy(files, remote)
 		if len(bad) == 0 {
@@ -564,9 +583,9 @@ func (a *app) verifyGame(files []gameFile) error {
 				}
 				fmt.Fprintf(&b, "  %s\n", f.Rel)
 			}
-			b.WriteString("\nPlease check the USB cable (try another cable or USB port) and that the\n" +
-				"headset has enough free space, then run the launcher again. It will only\n" +
-				"copy what is missing.")
+			b.WriteString("\nPlease check the " + a.connectionWord() + " (for a cable: try another cable or USB\n" +
+				"port) and that the headset has enough free space, then run the launcher\n" +
+				"again. It will only copy what is missing.")
 			return &userError{msg: b.String()}
 		}
 		say("%s did not arrive correctly. Copying again (try %d of %d)...", plural(len(bad), "file"), round, rounds)
@@ -627,5 +646,5 @@ func (a *app) writeManifest(files []gameFile) error {
 			return nil
 		}
 	}
-	return fail("Could not write the install file list to the headset.\nCheck the USB cable and try again.")
+	return fail("Could not write the install file list to the headset.\nCheck the %s and try again.", a.connectionWord())
 }

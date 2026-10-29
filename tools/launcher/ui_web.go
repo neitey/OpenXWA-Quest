@@ -471,7 +471,11 @@ func (w *webUI) Ask(q Question) Answer {
 	logf("ASK: %s | %s", q.Title, q.Text)
 	select {
 	case a := <-ch:
-		logf("ANSWER: %s %q", a.ID, a.Text)
+		if q.Secret {
+			logf("ANSWER: %s (secret text not logged)", a.ID)
+		} else {
+			logf("ANSWER: %s %q", a.ID, a.Text)
+		}
 		return a
 	case <-w.closed:
 		return Answer{ID: q.Default, Text: q.Value, Closed: true}

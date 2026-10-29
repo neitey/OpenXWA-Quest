@@ -15,6 +15,11 @@ check_updates=1
 include_test_versions=0
 # skip_version: a version you chose to skip (filled in by the launcher)
 skip_version=
+# connection: how the launcher reaches the headset: usb, usbwifi (USB, then
+# switch to Wi-Fi) or wifi (remembered from the last run)
+connection=
+# wifi_host: the headset's name or IP address for Wi-Fi (remembered)
+wifi_host=
 `
 
 // settings is a tiny key=value file. Lines are kept so comments survive

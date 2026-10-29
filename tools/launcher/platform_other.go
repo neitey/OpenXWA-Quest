@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os/exec"
+	"syscall"
 )
 
 func isHiddenSystemFile(fs.FileInfo) bool { return false }
@@ -15,7 +16,18 @@ func windowsSteamRoots() []string       { return nil }
 func windowsRegistryGameDirs() []string { return nil }
 
 func noConsoleWindow(*exec.Cmd) {}
-func setupConsole()             {}
+
+// sshProcAttr: in askpass mode ssh runs in a new session without a
+// terminal, so it uses SSH_ASKPASS; otherwise it asks on the terminal.
+func sshProcAttr(cmd *exec.Cmd, mode string) {
+	if mode == "askpass" {
+		if cmd.SysProcAttr == nil {
+			cmd.SysProcAttr = &syscall.SysProcAttr{}
+		}
+		cmd.SysProcAttr.Setsid = true
+	}
+}
+func setupConsole() {}
 
 // startLauncher is only supported on Windows (the release contains a Windows exe).
 func startLauncher(string) error { return errors.New("not supported on this system") }

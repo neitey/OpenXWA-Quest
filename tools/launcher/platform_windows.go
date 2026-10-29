@@ -40,6 +40,22 @@ func noConsoleWindow(cmd *exec.Cmd) {
 	cmd.SysProcAttr.CreationFlags |= createNoWindow
 }
 
+// sshProcAttr sets how ssh is started: "askpass" without any console (so it
+// cannot ask on one and uses SSH_ASKPASS), "window" in a new console window
+// where the user types the password, "console" in the launcher's console.
+func sshProcAttr(cmd *exec.Cmd, mode string) {
+	const detachedProcess, createNewConsole = 0x00000008, 0x00000010
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	switch mode {
+	case "askpass":
+		cmd.SysProcAttr.CreationFlags |= detachedProcess
+	case "window":
+		cmd.SysProcAttr.CreationFlags |= createNewConsole
+	}
+}
+
 // startLauncher starts the new launcher (a GUI program) from its own folder.
 func startLauncher(exe string) error {
 	cmd := exec.Command(exe)

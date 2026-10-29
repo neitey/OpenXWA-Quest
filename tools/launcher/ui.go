@@ -33,6 +33,7 @@ type Question struct {
 	Placeholder string   `json:"placeholder,omitempty"`
 	Browse      bool     `json:"browse,omitempty"` // offer a folder picker next to the field
 	Error       bool     `json:"error,omitempty"`  // red card
+	Secret      bool     `json:"secret,omitempty"` // password field; the answer is never logged
 
 	// Console only.
 	AllowText     bool   `json:"-"` // free text is accepted as the answer "text"
@@ -55,8 +56,9 @@ type Progress struct {
 	Bytes      int64
 	TotalBytes int64
 	Folder     string
-	Busy       bool // a long single operation is running (counts move later)
-	Spin       int  // console spinner phase
+	Busy       bool      // a long single operation is running (counts move later)
+	Spin       int       // console spinner phase
+	Started    time.Time // set for copies: shows speed and time left
 }
 
 // Fraction returns 0..1 (bytes if known, else files), or -1 if unknown.
@@ -70,15 +72,50 @@ func (p *Progress) Fraction() float64 {
 	return -1
 }
 
-// Summary is "412 of 1530 files - 380 MB of 1.02 GB" (or bytes only).
+// Summary is "412 of 1530 files - 380 MB of 1.02 GB" (or bytes only),
+// followed by the speed and time left for copies.
 func (p *Progress) Summary() string {
+	s := humanSize(p.Bytes)
 	if p.TotalFiles > 0 {
-		return fmt.Sprintf("%d of %d files - %s of %s", p.Files, p.TotalFiles, humanSize(p.Bytes), humanSize(p.TotalBytes))
+		s = fmt.Sprintf("%d of %d files - %s of %s", p.Files, p.TotalFiles, humanSize(p.Bytes), humanSize(p.TotalBytes))
+	} else if p.TotalBytes > 0 {
+		s = fmt.Sprintf("%s of %s (%d%%)", humanSize(p.Bytes), humanSize(p.TotalBytes), p.Bytes*100/p.TotalBytes)
 	}
-	if p.TotalBytes > 0 {
-		return fmt.Sprintf("%s of %s (%d%%)", humanSize(p.Bytes), humanSize(p.TotalBytes), p.Bytes*100/p.TotalBytes)
+	if sp := p.Speed(time.Now()); sp != "" {
+		s += " - " + sp
 	}
-	return humanSize(p.Bytes)
+	return s
+}
+
+// Speed is "12.3 MB/s, about 4 min left" (average since Started), or "" while
+// not known yet.
+func (p *Progress) Speed(now time.Time) string {
+	if p.Started.IsZero() || p.Bytes <= 0 {
+		return ""
+	}
+	el := now.Sub(p.Started)
+	if el < 3*time.Second {
+		return ""
+	}
+	rate := float64(p.Bytes) / el.Seconds()
+	s := humanSize(int64(rate)) + "/s"
+	if left := p.TotalBytes - p.Bytes; left > 0 && rate > 0 {
+		s += ", about " + humanDuration(time.Duration(float64(left)/rate*float64(time.Second))) + " left"
+	}
+	return s
+}
+
+// humanDuration is "40 s", "12 min" or "1 h 5 min".
+func humanDuration(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%d s", int(d.Seconds()+0.5))
+	case d < time.Hour:
+		return fmt.Sprintf("%d min", int(d.Minutes()+0.5))
+	default:
+		m := int(d.Minutes()+0.5) % 60
+		return fmt.Sprintf("%d h %d min", int(d.Hours()), m)
+	}
 }
 
 // UI is implemented by consoleUI and webUI.

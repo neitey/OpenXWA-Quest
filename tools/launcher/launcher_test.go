@@ -3,14 +3,18 @@ package main
 import (
 	"archive/zip"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCompareVersions(t *testing.T) {
@@ -386,6 +390,14 @@ func TestOwnership(t *testing.T) {
 			t.Errorf("foreignOwner(%v, %d) = %v", c.o, c.app, got)
 		}
 	}
+	// Steam Frame: what the app makes shows as root, so root is the app's.
+	lep := &app{uid: 10225, appOwner: &owner{"root", 0}}
+	if lep.foreign(owner{"root", 0}) || !lep.foreign(owner{"shell", 2000}) || lep.foreign(owner{"u0_a225", 10225}) {
+		t.Error("foreign with a learnt root owner")
+	}
+	if !(&app{uid: 10225}).foreign(owner{"root", 0}) {
+		t.Error("root without a learnt owner")
+	}
 	dump := "Packages:\n  Package [org.openxwa.quest] (4d2b1c):\n    userId=10225\n    versionName=1.0\n"
 	if parseAppUID(dump) != 10225 || parseAppUID("nothing") != 0 {
 		t.Error("parseAppUID")
@@ -448,5 +460,425 @@ func TestImportBatches(t *testing.T) {
 	}
 	if n != len(items) || len(b) != 5 {
 		t.Errorf("%d items in %d batches", n, len(b))
+	}
+}
+
+// TestMain lets the test binary act as ssh's askpass program (see
+// TestSSHTunnelAskpass), like the launcher exe does.
+func TestMain(m *testing.M) {
+	if runAskpass() {
+		return
+	}
+	os.Exit(m.Run())
+}
+
+func TestSplitHostPort(t *testing.T) {
+	cases := []struct {
+		in   string
+		host string
+		port int
+		ok   bool
+	}{
+		{"frame", "frame", 5555, true},
+		{" frame ", "frame", 5555, true},
+		{"frame:5556", "frame", 5556, true},
+		{"192.168.1.23", "192.168.1.23", 5555, true},
+		{"192.168.1.23:5599", "192.168.1.23", 5599, true},
+		{"[fe80::1]:5555", "fe80::1", 5555, true},
+		{"fe80::1", "fe80::1", 5555, true},
+		{"frame:", "", 0, false},
+		{"frame:99999", "", 0, false},
+		{"frame:abc", "", 0, false},
+		{"", "", 0, false},
+		{"my frame", "", 0, false},
+		{"steamos@frame", "", 0, false},
+		{"http://frame", "", 0, false},
+	}
+	for _, c := range cases {
+		h, p, err := splitHostPort(c.in, adbTCPPort)
+		if (err == nil) != c.ok || h != c.host || p != c.port {
+			t.Errorf("splitHostPort(%q) = %q, %d, %v", c.in, h, p, err)
+		}
+	}
+	for s, want := range map[string]bool{
+		"192.168.1.5:5555": true, "localhost:5555": true, "127.0.0.1:41234": true, "[fe80::1]:5555": true,
+		"1WMHH8123": false, "emulator-5554": false, "": false, "2G0YC1ZF8B07WD": false,
+	} {
+		if isNetSerial(s) != want {
+			t.Errorf("isNetSerial(%q) = %v", s, !want)
+		}
+	}
+	if got := pickAddr([]string{"fe80::1", "192.168.1.9"}); got != "192.168.1.9" {
+		t.Errorf("pickAddr = %s", got)
+	}
+	if got := pickAddr([]string{"fe80::1", "2001:db8::5"}); got != "2001:db8::5" {
+		t.Errorf("pickAddr v6 = %s", got)
+	}
+}
+
+func TestDialErrorKinds(t *testing.T) {
+	cases := map[string]string{
+		"failed to connect to '192.168.1.5:5555': Connection refused":                                                                     "refused",
+		"cannot connect to 192.168.1.5:5555: No connection could be made because the target machine actively refused it. (10061)":         "refused",
+		"cannot resolve host 'frame' and port 5555: No such host is known. (11001)":                                                       "notfound",
+		"failed to resolve host: 'frame': Name or service not known":                                                                      "notfound",
+		"failed to connect to '192.168.1.5:5555': Connection timed out":                                                                   "timeout",
+		"cannot connect to 10.0.0.9:5555: A connection attempt failed because the connected party did not properly respond after (10060)": "timeout",
+		"dial tcp 10.1.1.1:5555: i/o timeout":                                                                                             "timeout",
+		"dial tcp 10.1.1.1:5555: connect: no route to host":                                                                               "unreachable",
+		"failed to connect to '10.0.0.2:5555': Network is unreachable":                                                                    "unreachable",
+		"failed to authenticate to 192.168.1.5:5555":                                                                                      "auth",
+		"something else entirely": "other",
+	}
+	for in, want := range cases {
+		if got := dialErrorKind(in); got != want {
+			t.Errorf("dialErrorKind(%q) = %s, want %s", in, got, want)
+		}
+	}
+	for in, want := range map[string]bool{
+		"connected to 192.168.1.5:5555":                               true,
+		"already connected to 127.0.0.1:41000":                        true,
+		"failed to connect to '192.168.1.5:5555': Connection refused": false,
+		"cannot connect to frame:5555: connected to nothing":          false,
+	} {
+		if adbConnectOK(in) != want {
+			t.Errorf("adbConnectOK(%q) = %v", in, !want)
+		}
+	}
+}
+
+func TestParseWlanIP(t *testing.T) {
+	addr := "34: wlan0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP group default qlen 3000\n" +
+		"    inet 192.168.178.44/24 brd 192.168.178.255 scope global wlan0\n" +
+		"       valid_lft forever preferred_lft forever\n"
+	if got := parseWlanIP(addr); got != "192.168.178.44" {
+		t.Errorf("addr: %q", got)
+	}
+	route := "192.168.178.0/24 dev wlan0 proto kernel scope link src 192.168.178.44\n"
+	if got := parseWlanIP("\n" + route); got != "192.168.178.44" {
+		t.Errorf("route: %q", got)
+	}
+	both := "1: lo: <LOOPBACK,UP>\n    inet 127.0.0.1/8 scope host lo\n" +
+		"5: rmnet0: <UP>\n    inet 10.20.30.40/30 scope global rmnet0\n" +
+		"10.0.0.0/8 dev rmnet0 src 10.20.30.40\n" + route
+	if got := parseWlanIP(both); got != "192.168.178.44" {
+		t.Errorf("both: %q", got)
+	}
+	if got := parseWlanIP("1: lo: <LOOPBACK,UP>\n    inet 127.0.0.1/8 scope host lo\n"); got != "" {
+		t.Errorf("loopback only: %q", got)
+	}
+	if got := parseWlanIP("7: eth0: <UP>\n    inet 10.1.2.3/24 scope global eth0\n"); got != "10.1.2.3" {
+		t.Errorf("fallback: %q", got)
+	}
+}
+
+func TestSSHArgsAndErrors(t *testing.T) {
+	args := sshArgs("192.168.1.5", 41234, 5555, `C:\Users\John Doe\AppData\Local\OpenXWA\known_hosts`, true)
+	j := strings.Join(args, "\x00")
+	for _, want := range []string{
+		"-L\x00127.0.0.1:41234:127.0.0.1:5555", "-l\x00steamos", "StrictHostKeyChecking=accept-new",
+		"ExitOnForwardFailure=yes", "NumberOfPasswordPrompts=1", "PubkeyAuthentication=no",
+	} {
+		if !strings.Contains(j, want) {
+			t.Errorf("sshArgs lacks %q: %q", want, args)
+		}
+	}
+	if runtimeIsWindows() {
+		if !strings.Contains(j, `UserKnownHostsFile="C:/Users/John Doe/AppData/Local/OpenXWA/known_hosts"`) {
+			t.Errorf("known_hosts path not quoted: %q", args)
+		}
+	}
+	if args[len(args)-2] != "192.168.1.5" || args[len(args)-1] != sshRemoteCommand {
+		t.Errorf("host and command must come last: %q", args[len(args)-2:])
+	}
+	if a := strings.Join(sshArgs("frame", 1, 5556, "/tmp/k h", false), " "); !strings.Contains(a, "StrictHostKeyChecking=no") ||
+		!strings.Contains(a, `UserKnownHostsFile="/tmp/k h"`) || !strings.Contains(a, "127.0.0.1:1:127.0.0.1:5556") {
+		t.Errorf("old ssh args: %s", a)
+	}
+
+	cases := map[string]string{
+		"ssh: Could not resolve hostname frame: No such host is known.":                                   "notfound",
+		"steamos@192.168.1.5: Permission denied (publickey,password).":                                    "sshauth",
+		"ssh: connect to host 192.168.1.5 port 22: Connection refused":                                    "sshrefused",
+		"ssh: connect to host 192.168.1.5 port 22: Connection timed out":                                  "timeout",
+		"ssh: connect to host 10.0.0.5 port 22: No route to host":                                         "unreachable",
+		"@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed.":         "hostkey",
+		"bind [127.0.0.1]:41234: Address already in use\nchannel_setup_fwd_listener_tcpip: cannot listen": "localport",
+		"channel 2: open failed: connect failed: Connection refused":                                      "lepton",
+		"kex_exchange_identification: read: Connection reset":                                             "other",
+	}
+	for in, want := range cases {
+		if got := classifySSH(in); got != want {
+			t.Errorf("classifySSH(%q) = %s, want %s", in, got, want)
+		}
+	}
+	for in, want := range map[string][2]int{
+		"OpenSSH_for_Windows_8.1p1, LibreSSL 3.0.2": {8, 1},
+		"OpenSSH_for_Windows_7.7p1, LibreSSL 2.6.5": {7, 7},
+		"OpenSSH_9.6p1 Ubuntu-3ubuntu13, OpenSSL":   {9, 6},
+	} {
+		ma, mi, ok := parseSSHVersion(in)
+		if !ok || ma != want[0] || mi != want[1] {
+			t.Errorf("parseSSHVersion(%q) = %d.%d %v", in, ma, mi, ok)
+		}
+	}
+	if _, _, ok := parseSSHVersion("ssh: unknown"); ok {
+		t.Error("parseSSHVersion accepted garbage")
+	}
+	for in, want := range map[string]bool{
+		"steamos@192.168.1.5's password: ":                                      true,
+		"(steamos@frame) Password: ":                                            true,
+		"Enter passphrase for key 'id_ed25519': ":                               false,
+		"Are you sure you want to continue connecting (yes/no/[fingerprint])? ": false,
+	} {
+		if askpassWantsPassword(in) != want {
+			t.Errorf("askpassWantsPassword(%q) = %v", in, !want)
+		}
+	}
+	kh := filepath.Join(t.TempDir(), "known_hosts")
+	os.WriteFile(kh, []byte("192.168.1.5 ssh-ed25519 AAAA\n[192.168.1.6]:22 ssh-ed25519 BBBB\nother ssh-ed25519 CCCC\n"), 0o600)
+	forgetHostKey(kh, "192.168.1.5")
+	forgetHostKey(kh, "192.168.1.6")
+	if data, _ := os.ReadFile(kh); string(data) != "other ssh-ed25519 CCCC\n" {
+		t.Errorf("forgetHostKey left %q", data)
+	}
+}
+
+func TestRouteQuestionAndSpeed(t *testing.T) {
+	q := routeQuestion("")
+	if q.Default != routeUSB || q.Options[1].Key != "" || q.Options[1].Style != "primary" || q.Options[0].ID != routeFrame {
+		t.Errorf("default route: %+v", q)
+	}
+	q = routeQuestion(routeWiFi)
+	if q.Default != routeWiFi || q.Options[3].Key != "" || q.Options[1].Key != "u" {
+		t.Errorf("wifi route: %+v", q)
+	}
+	q = routeQuestion(routeFrame)
+	if q.Default != routeFrame || q.Options[0].Style != "primary" {
+		t.Errorf("frame route: %+v", q)
+	}
+	p := Progress{Bytes: 100 << 20, TotalBytes: 400 << 20, Started: time.Now().Add(-10 * time.Second)}
+	if got := p.Speed(p.Started.Add(10 * time.Second)); got != "10 MB/s, about 30 s left" {
+		t.Errorf("speed: %q", got)
+	}
+	if got := p.Speed(p.Started.Add(time.Second)); got != "" {
+		t.Errorf("speed too early: %q", got)
+	}
+	if got := (&Progress{Bytes: 5}).Speed(time.Now()); got != "" {
+		t.Errorf("speed without start: %q", got)
+	}
+	for d, want := range map[time.Duration]string{
+		40 * time.Second: "40 s", 12 * time.Minute: "12 min", 65 * time.Minute: "1 h 5 min",
+	} {
+		if got := humanDuration(d); got != want {
+			t.Errorf("humanDuration(%s) = %q", d, got)
+		}
+	}
+}
+
+func TestScanAndProbe(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skip(err)
+	}
+	defer ln.Close()
+	open := ln.Addr().(*net.TCPAddr).Port
+	closed, _ := freeLocalPort()
+	if got := probeTCP("127.0.0.1", open, time.Second); got != "open" {
+		t.Errorf("probe open port: %s", got)
+	}
+	if got := probeTCP("127.0.0.1", closed, time.Second); got != "refused" {
+		t.Errorf("probe closed port: %s", got)
+	}
+	if got := scanPorts("127.0.0.1", []int{closed, open}, time.Second); !reflect.DeepEqual(got, []int{open}) {
+		t.Errorf("scanPorts: %v", got)
+	}
+}
+
+func runtimeIsWindows() bool { return filepath.Separator == '\\' }
+
+// fakeTool writes a shell script standing in for adb or ssh.
+func fakeTool(t *testing.T, name, body string) string {
+	t.Helper()
+	if runtimeIsWindows() {
+		t.Skip("shell script tools")
+	}
+	p := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(p, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// TestConnectWiFi runs the Wi-Fi connection against a fake adb and real
+// local ports: a refused port gives a "refused" problem, a listening port
+// with an adb that answers gives a network serial.
+func TestConnectWiFi(t *testing.T) {
+	adb := fakeTool(t, "adb", `case "$*" in
+  "connect "*) echo "connected to $2" ;;
+  *"getprop ro.build.version.sdk"*) echo 32 ;;
+  *) echo ok ;;
+esac
+`)
+	a := &app{adb: &ADB{Path: adb}}
+	old := lookupHost
+	defer func() { lookupHost = old }()
+	lookupHost = func(h string) ([]string, error) {
+		if h == "frame" {
+			return []string{"127.0.0.1"}, nil
+		}
+		return nil, fmt.Errorf("no such host")
+	}
+	err := a.connectWiFi("nosuchheadset")
+	var wp *wifiProblem
+	if !errors.As(err, &wp) || wp.kind != "notfound" {
+		t.Fatalf("unknown host: %v", err)
+	}
+	closed, _ := freeLocalPort()
+	err = a.connectWiFi("frame:" + strconv.Itoa(closed))
+	if !errors.As(err, &wp) || wp.kind != "refused" || !strings.Contains(wp.msg, "Lepton") {
+		t.Fatalf("closed port: %v", err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skip(err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+	if err := a.connectWiFi("frame:" + strconv.Itoa(port)); err != nil {
+		t.Fatalf("open port: %v", err)
+	}
+	want := "127.0.0.1:" + strconv.Itoa(port)
+	if a.adb.Serial != want || a.lepton != want || a.netHost != "frame" {
+		t.Errorf("after connect: serial %q lepton %q host %q", a.adb.Serial, a.lepton, a.netHost)
+	}
+	if a.connectionWord() != "Wi-Fi connection" {
+		t.Errorf("connectionWord: %s", a.connectionWord())
+	}
+
+	// An adb that keeps answering "unauthorized"-free garbage is not Android.
+	a2 := &app{adb: &ADB{Path: fakeTool(t, "adb", `case "$*" in
+  "connect "*) echo "connected to $2" ;;
+  *) echo "/system/bin/sh: getprop: not found" ;;
+esac
+`)}}
+	err = a2.netConnect(want, 30*time.Second)
+	if !errors.As(err, &wp) || wp.kind != "noadb" {
+		t.Errorf("not android: %v", err)
+	}
+}
+
+// TestSSHTunnelAskpass runs the tunnel against a fake ssh that asks for the
+// password through SSH_ASKPASS (this test binary, see TestMain), like
+// OpenSSH does, and checks that the password never reaches the log.
+func TestSSHTunnelAskpass(t *testing.T) {
+	ssh := fakeTool(t, "ssh", `pw=$("$SSH_ASKPASS" "steamos@127.0.0.1's password: ")
+if [ "$pw" != "s3cret pw" ]; then echo "steamos@127.0.0.1: Permission denied (password)." >&2; exit 255; fi
+echo 'Authenticated to 127.0.0.1 ([127.0.0.1]:22) using "password".' >&2
+echo "LISTEN 0 4096 127.0.0.1:5555 0.0.0.0:*"
+echo `+sshReadyMarker+`
+cat >/dev/null
+echo "ssh: closed" >&2
+`)
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	openLog(dir)
+	defer closeLog()
+
+	tun := &sshTunnel{sshPath: ssh, host: "127.0.0.1", remotePort: 5555, password: "s3cret pw", mode: "askpass", acceptNew: true}
+	if err := tun.start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if !tun.running() || tun.localPort == 0 {
+		t.Fatal("tunnel not running")
+	}
+	if got := parseLeptonPorts(tun.output()); !reflect.DeepEqual(got, []int{5555}) {
+		t.Errorf("ports seen over ssh: %v", got)
+	}
+	tun.stop()
+	if tun.running() {
+		t.Error("tunnel still running after stop")
+	}
+
+	bad := &sshTunnel{sshPath: ssh, host: "127.0.0.1", remotePort: 5555, password: "wrong", mode: "askpass", acceptNew: true}
+	err := bad.start()
+	var wp *wifiProblem
+	if !errors.As(err, &wp) || wp.kind != "sshauth" {
+		t.Errorf("wrong password: %v", err)
+	}
+	if bad.password != "" {
+		t.Error("a refused password is kept")
+	}
+
+	// An ssh that never asks (askpass not used) is reported as such, so the
+	// launcher can fall back to a console window (Windows) or explain.
+	silent := fakeTool(t, "ssh", `echo "steamos@127.0.0.1: Permission denied (password)." >&2; exit 255`)
+	s2 := &sshTunnel{sshPath: silent, host: "127.0.0.1", remotePort: 5555, password: "x", mode: "askpass", acceptNew: true}
+	err = s2.startOnce()
+	if !errors.As(err, &wp) || wp.kind != "noaskpass" {
+		t.Errorf("no askpass: %v", err)
+	}
+
+	closeLog()
+	data, _ := os.ReadFile(filepath.Join(dir, logFileName))
+	if len(data) == 0 {
+		t.Fatal("empty log")
+	}
+	if strings.Contains(string(data), "s3cret") || strings.Contains(string(data), "wrong\n") {
+		t.Errorf("the password reached the log:\n%s", data)
+	}
+	if !strings.Contains(string(data), "askpass request 1") || !strings.Contains(string(data), "exit code") {
+		t.Errorf("log lacks the askpass request or exit code:\n%s", data)
+	}
+}
+
+func TestFrameProbeAndVdf(t *testing.T) {
+	out := "home=/home/steamos\nsteam=/home/steamos/.local/share/Steam\nhostname=frame\n" +
+		"lepton=/home/steamos/.local/share/Steam/steamapps/common/Lepton/lepton\nsteam_running=1\nuser=123\n" +
+		"dir=/home/steamos/Applications/neitey-xw-alliance-vr\napk_size=10\napk_sha=ab\navail_kb=2048\n" + frameProbeEnd + "\n"
+	l, ok := parseFrameProbe(out)
+	if !ok || l.lepton == "" || !l.steamRunning || len(l.users) != 1 || l.availKB != 2048 || l.apkSize != 10 {
+		t.Fatalf("probe: %+v %v", l, ok)
+	}
+	if _, ok := parseFrameProbe("home=/x\n"); ok {
+		t.Error("incomplete probe accepted")
+	}
+	l.appid = 0x8abc1234
+	if l.runGameID() != 0x8abc123402000000 {
+		t.Errorf("rungameid %x", l.runGameID())
+	}
+	// A shortcuts.vdf with one devkit entry.
+	var b []byte
+	cs := func(s string) []byte { return append([]byte(s), 0) }
+	b = append(b, 0)
+	b = append(b, cs("shortcuts")...)
+	b = append(b, 0)
+	b = append(b, cs("0")...)
+	b = append(b, 2)
+	b = append(b, cs("appid")...)
+	b = append(b, 0x34, 0x12, 0xbc, 0x8a)
+	b = append(b, 1)
+	b = append(b, cs("AppName")...)
+	b = append(b, cs("Devkit Game: X")...)
+	b = append(b, 1)
+	b = append(b, cs("DevkitGameID")...)
+	b = append(b, cs(frameGameID)...)
+	b = append(b, 8, 8, 8)
+	root, err := vdfDecode(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := vdfFindDevkit(root, frameGameID); got != 0x8abc1234 {
+		t.Errorf("devkit appid %x", got)
+	}
+	if got := vdfFindDevkit(root, "Other"); got != 0 {
+		t.Errorf("other appid %x", got)
+	}
+	if portraitTile(nil) != nil {
+		t.Error("portrait from nothing")
+	}
+	if !strings.Contains(l.launchScript(), "SteamAppId=2327581236") || !strings.Contains(l.launchScript(), "\"$lepton\" start") {
+		t.Errorf("launch script: %s", l.launchScript())
 	}
 }

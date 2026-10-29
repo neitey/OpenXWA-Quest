@@ -198,6 +198,7 @@ func (a *app) importFiles(verb string, items []importItem, dest string) error {
 		if len(batches) > 1 {
 			part = fmt.Sprintf(" (part %d of %d)", bi+1, len(batches))
 		}
+		reconnects := 0
 		for try := 1; ; try++ {
 			mark := p.snapshot()
 			err := a.importBatch(p, b, dest, verb, part)
@@ -213,26 +214,47 @@ func (a *app) importFiles(verb string, items []importItem, dest string) error {
 				continue
 			}
 			logf("import %d of %d failed (try %d): %v", bi+1, len(batches), try, err)
-			if a.headsetGone() && !a.waitForHeadset() {
-				return errDisconnected
+			if a.headsetGone() {
+				if !a.waitForHeadset() {
+					return errDisconnected
+				}
+				// A dropped connection does not use up a try (within reason):
+				// the batch is sent again from the start.
+				if reconnects++; reconnects <= 8 {
+					try--
+					continue
+				}
 			}
 			if try == 4 {
 				return fail("Could not copy the files to the headset:\n  %v\n\n"+
-					"Check the USB cable (try another cable or USB port) and that the headset\n"+
-					"has enough free space, then try again. Only what is missing is copied.", err)
+					"Check the %s (for a cable: try another cable or USB port) and that the\n"+
+					"headset has enough free space, then try again. Only what is missing is\n"+
+					"copied.", err, a.connectionWord())
 			}
 		}
 	}
 	return nil
 }
 
-// waitForHeadset waits up to 90 s for a dropped USB connection to come back.
+// waitForHeadset waits for a dropped connection to come back: 90 s for USB;
+// over Wi-Fi (or the SSH tunnel) 3 minutes, reconnecting every few seconds.
 func (a *app) waitForHeadset() bool {
-	say("The connection to the headset dropped. Waiting for it to come back...")
+	network := isNetSerial(a.adb.Serial)
+	limit := 90 * time.Second
+	if network {
+		limit = 3 * time.Minute
+		say("The Wi-Fi connection to the headset dropped. Reconnecting... Keep the\n" +
+			"headset awake (on Steam Frame keep \"Lepton Development\" running).")
+	} else {
+		say("The connection to the headset dropped. Waiting for it to come back...")
+	}
+	logf("waiting up to %s for %s", limit, a.adb.Serial)
 	start := time.Now()
-	for time.Since(start) < 90*time.Second {
-		if !sleepCtx(2 * time.Second) {
-			return false
+	lastTry := time.Time{}
+	for time.Since(start) < limit {
+		if network && time.Since(lastTry) >= 6*time.Second {
+			lastTry = time.Now()
+			a.reconnectNet()
 		}
 		out, err := a.adb.runQuiet(10*time.Second, "get-state")
 		if err == nil && strings.TrimSpace(out) == "device" {
@@ -241,8 +263,11 @@ func (a *app) waitForHeadset() bool {
 			sleepCtx(2 * time.Second)
 			return true
 		}
-		if int(time.Since(start).Seconds())%20 < 2 {
+		if !network && int(time.Since(start).Seconds())%20 < 2 {
 			a.adb.runQuiet(15*time.Second, "reconnect", "offline")
+		}
+		if !sleepCtx(2 * time.Second) {
+			return false
 		}
 	}
 	logf("headset did not come back")
