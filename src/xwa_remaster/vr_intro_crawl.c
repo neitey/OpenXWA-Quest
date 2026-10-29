@@ -139,7 +139,7 @@ static struct {
 } s_crawl;
 
 static float crawl_env(const char* name, float fallback) {
-	const char* v = getenv(name);
+	const char* v = SDL_getenv(name);
 	return v && v[0] ? (float)atof(v) : fallback;
 }
 

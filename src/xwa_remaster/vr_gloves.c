@@ -10,6 +10,7 @@
  * (+-0.03, -0.05, 0.15) m. */
 
 #include "xwa_remaster/vr_gloves.h"
+#include <SDL3/SDL_stdinc.h>
 #include "xwa_remaster/vr_controllers.h"
 
 #include "aeron/aeron.h"
@@ -254,7 +255,7 @@ static struct {
 
 /* XWA_XR_GLOVE_SCALE: glove size (1 = the model's own, a large hand). */
 static float gl_scale(void) {
-	const char* env = getenv("XWA_XR_GLOVE_SCALE");
+	const char* env = SDL_getenv("XWA_XR_GLOVE_SCALE");
 	const float v = env && env[0] ? (float)atof(env) : 0.85f;
 	return v > 0.3f && v < 2.0f ? v : 0.85f;
 }
@@ -262,13 +263,13 @@ static float gl_scale(void) {
 int XwaVrHands_Mode(void) {
 	/* XWA_XR_HANDS: gloves / controllers / off; before it, XWA_XR_GLOVES=0
 	 * meant no hands. */
-	const char* env = getenv("XWA_XR_HANDS");
+	const char* env = SDL_getenv("XWA_XR_HANDS");
 	if (env && env[0]) {
 		return env[0] == 'g' || env[0] == 'G'   ? XWA_VR_HANDS_GLOVES
 			   : env[0] == 'c' || env[0] == 'C' ? XWA_VR_HANDS_CONTROLLERS
 												: XWA_VR_HANDS_OFF;
 	}
-	const char* gloves = getenv("XWA_XR_GLOVES");
+	const char* gloves = SDL_getenv("XWA_XR_GLOVES");
 	return gloves && gloves[0] == '0' ? XWA_VR_HANDS_OFF : XWA_VR_HANDS_CONTROLLERS;
 }
 
@@ -607,7 +608,7 @@ static void gl_instance(AeronScene3D* scene, const AeronSceneMesh* mesh, const G
 }
 
 static void gl_env3(const char* name, float out[3]) {
-	const char* v = getenv(name);
+	const char* v = SDL_getenv(name);
 	out[0] = out[1] = out[2] = 0.0f;
 	if (v && v[0]) {
 		sscanf(v, "%f,%f,%f", &out[0], &out[1], &out[2]);

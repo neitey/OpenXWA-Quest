@@ -64,7 +64,7 @@ static struct {
 } s_vv;
 
 static int vv_mode(void) {
-	const char* v = getenv("XWA_XR_VOICE");
+	const char* v = SDL_getenv("XWA_XR_VOICE");
 	if (!v || !v[0]) {
 		return VV_MODE_DOUBLE_TAP;
 	}
@@ -106,7 +106,7 @@ static const char* vv_model_dir(void) {
 	const char* internal = SDL_GetAndroidInternalStoragePath();
 	snprintf(dir, sizeof dir, "%s/voice-en", internal ? internal : ".");
 #else
-	const char* env = getenv("XWA_VOICE_MODEL_DIR");
+	const char* env = SDL_getenv("XWA_VOICE_MODEL_DIR");
 	snprintf(dir, sizeof dir, "%s", env && env[0] ? env : "voice");
 #endif
 	return dir;
@@ -185,7 +185,7 @@ static int SDLCALL vv_worker(void* unused) {
 #if defined(SDL_PLATFORM_ANDROID)
 				const char* lib = "libsherpa-onnx-c-api.so";
 #else
-				const char* lib = getenv("XWA_VOICE_LIB") ? getenv("XWA_VOICE_LIB") : "libsherpa-onnx-c-api.so";
+				const char* lib = SDL_getenv("XWA_VOICE_LIB") ? SDL_getenv("XWA_VOICE_LIB") : "libsherpa-onnx-c-api.so";
 #endif
 				ok = XwaVoice_Load(lib, dir, 2, error, sizeof error);
 			}

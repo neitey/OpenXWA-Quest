@@ -35,7 +35,7 @@ typedef struct VrKeyboard {
 static VrKeyboard g_vrk;
 
 static int vrk_mode(void) {
-	const char* env = getenv("XWA_VR_KEYBOARD");
+	const char* env = SDL_getenv("XWA_VR_KEYBOARD");
 	if (env && env[0] == '0') {
 		return 0;
 	}

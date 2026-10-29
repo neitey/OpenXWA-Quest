@@ -97,7 +97,7 @@ int XwaVrBeam_DrawStrips(AeronCommandBuffer* cmd, AeronRenderTarget* target, int
 	/* Premultiplied: a soft cyan glow and a core, strongest at the far end.
 	 * Strip 0 is the menu pointer, translucent so the screen shows through
 	 * (XWA_XR_BEAM_OPACITY, default 0.5); strip 1 the faint console beams. */
-	const char* opacity_env = getenv("XWA_XR_BEAM_OPACITY");
+	const char* opacity_env = SDL_getenv("XWA_XR_BEAM_OPACITY");
 	float opacity = opacity_env && opacity_env[0] ? (float)atof(opacity_env) : 0.5f;
 	opacity = opacity < 0.05f ? 0.05f : opacity > 1.0f ? 1.0f : opacity;
 	for (int faint = 0; faint < 2; ++faint) {

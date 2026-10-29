@@ -1,6 +1,7 @@
 /* Voice commands: recognizer and matcher; see voice_core.h. */
 
 #include "voice_core.h"
+#include <SDL3/SDL_stdinc.h>
 
 #include "third_party/sherpa-onnx/c-api.h"
 #include "xwa_remaster/vr_console_protocol.h"
@@ -97,7 +98,7 @@ int XwaVoice_Load(const char* lib, const char* model_dir, int threads, char* err
 	config.model_config.tokens = tokens;
 	config.model_config.num_threads = threads > 0 ? threads : 1;
 	config.model_config.provider = "cpu";
-	config.model_config.debug = getenv("XWA_VOICE_DEBUG") ? 1 : 0;
+	config.model_config.debug = SDL_getenv("XWA_VOICE_DEBUG") ? 1 : 0;
 	config.decoding_method = "greedy_search";
 	config.max_active_paths = 4;
 	s_xv.recognizer = s_xv.create_recognizer(&config);

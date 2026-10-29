@@ -1,6 +1,7 @@
 /* VR cockpit HUD panels; see vr_cockpit_hud.h. */
 
 #include "xwa_remaster/vr_cockpit_hud.h"
+#include <SDL3/SDL_stdinc.h>
 
 #include "aeron/aeron.h"
 #include "aeron/scene/draw_list2d.h"
@@ -243,7 +244,7 @@ static void ck_union(float acc[4], int* valid, const float b[4]) {
 }
 
 float XwaVrCockpitHud_SeatBack(void) {
-	const char* env = getenv("XWA_XR_SEAT_POSITION");
+	const char* env = SDL_getenv("XWA_XR_SEAT_POSITION");
 	const float back = env && env[0] ? (float)atof(env) : 0.0f;
 	return back < -0.2f ? -0.2f : back > 0.2f ? 0.2f : back;
 }
@@ -459,7 +460,7 @@ static const char* ck_builtin_layout(const char* key) {
 static void ck_read_layout(const char* cockpit) {
 	char key[96];
 	ck_layout_key(cockpit, key, sizeof key);
-	const char* v = getenv(key);
+	const char* v = SDL_getenv(key);
 	if (!v) {
 		v = ck_builtin_layout(key);
 	}
@@ -514,7 +515,7 @@ static void ck_save_layout(void) {
 			break;
 		}
 	}
-	setenv(s_ck.cockpit_key, s_ck.layout_text, 1);
+	SDL_setenv_unsafe(s_ck.cockpit_key, s_ck.layout_text, 1);
 	snprintf(s_ck.pose_env, sizeof s_ck.pose_env, "%s", s_ck.layout_text);
 	s_ck.layout_dirty = 1;
 	Aeron_LogInfo("xwa.remaster", "VR HUD layout %s saved", s_ck.cockpit_key);

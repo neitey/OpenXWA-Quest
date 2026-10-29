@@ -710,7 +710,7 @@ static void hoth_load_boom(AeronCommandBuffer* cmd) {
  * straight RGBA; an APK asset, never in the repo). */
 static void hoth_load_logo(AeronCommandBuffer* cmd) {
 	static const char* const paths[2] = { "vr/logo.rgba", "assets/vr/logo.rgba" };
-	const char* override = getenv("XWA_XR_LOGO");
+	const char* override = SDL_getenv("XWA_XR_LOGO");
 	for (int i = -1; i < 2 && !s_hoth.logo; ++i) {
 		const char* path = i < 0 ? (override && override[0] && strcmp(override, "0") ? override : NULL) : paths[i];
 		if (!path) {
@@ -978,7 +978,7 @@ int XwaVrIntroHoth_Load(AeronCommandBuffer* cmd) {
 	}
 	if (++s_hoth.step == 1 + HOTH_MESHES) {
 		hoth_build_paths();
-		if (getenv("XWA_XR_HOTH_CHECK")) {
+		if (SDL_getenv("XWA_XR_HOTH_CHECK")) {
 			hoth_check_clearance();
 		}
 		Aeron_LogInfo("xwa.remaster",

@@ -1,4 +1,5 @@
 #include "xwa_runtime/runtime/flight_task.h"
+#include <SDL3/SDL_stdinc.h>
 #include "xwa_runtime/runtime/flight_pause_task.h"
 #include "xwa_runtime/runtime/flight_checkpoints.h"
 #include "xwa/flight/hangar.h"
@@ -1388,7 +1389,7 @@ static int XwaFlightTask_NewPress(const XwaHangarPromptInput* now, const XwaHang
 }
 
 static int XwaFlightTask_HangarPromptDone(uint64_t nowUs) {
-	const char* off = getenv("XWA_HANGAR_PROMPT"); /* 0: no wait (tests) */
+	const char* off = SDL_getenv("XWA_HANGAR_PROMPT"); /* 0: no wait (tests) */
 	if (g_frontendMissionSessionMode != FRONTEND_MISSION_SESSION_SINGLEPLAYER || g_filmPlaybackMode ||
 		g_filmFilePath[0] || (off && off[0] == '0')) {
 		return 1;

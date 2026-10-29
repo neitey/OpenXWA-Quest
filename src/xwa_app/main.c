@@ -1,5 +1,7 @@
 #include "aeron/main.h"
+#include <SDL3/SDL_stdinc.h>
 #include "aeron/aeron.h"
+#include "aeron/xr.h"
 #include "crash_report.h"
 #include "host_config.h"
 #include "setup.h"
@@ -40,7 +42,7 @@ static int use_ingame_setup(void) {
 #if defined(SDL_PLATFORM_ANDROID)
 	return 1;
 #else
-	const char* value = getenv("XWA_INGAME_SETUP");
+	const char* value = SDL_getenv("XWA_INGAME_SETUP");
 	return value && value[0] == '1';
 #endif
 }
@@ -695,17 +697,17 @@ static void steam_frame_foveation(void) {
 		Aeron_LogInfo("xwa.config", "Steam Frame foveation: Valve's, eye-tracked");
 		return;
 	}
-	setenv("FDM_DEBUG", "disable_offsets", 0); /* no gaze-driven offsets */
+	SDL_setenv_unsafe("FDM_DEBUG", "disable_offsets", 0); /* no gaze-driven offsets */
 	if (SDL_strcasecmp(mode, "fixed") != 0) {
-		setenv("FDM", "0", 0);
-		setenv("DISABLE_VULKAN_FDM_INJECTION_LAYER", "1", 0);
-		setenv("DISABLE_XR_APILAYER_VALVE_FDM_INJECTION", "1", 0);
-		setenv("DISABLE_XR_APILAYER_VALVE_fdm_injection", "1", 0);
+		SDL_setenv_unsafe("FDM", "0", 0);
+		SDL_setenv_unsafe("DISABLE_VULKAN_FDM_INJECTION_LAYER", "1", 0);
+		SDL_setenv_unsafe("DISABLE_XR_APILAYER_VALVE_FDM_INJECTION", "1", 0);
+		SDL_setenv_unsafe("DISABLE_XR_APILAYER_VALVE_fdm_injection", "1", 0);
 	}
 	Aeron_LogInfo("xwa.config", "Steam Frame foveation: %s (FDM_DEBUG=%s, FDM=%s)",
 				  SDL_strcasecmp(mode, "fixed") == 0 ? "Valve's, fixed (no eye tracking)"
 													 : "Valve's off, the game's own fixed foveation",
-				  getenv("FDM_DEBUG") ? getenv("FDM_DEBUG") : "", getenv("FDM") ? getenv("FDM") : "");
+				  SDL_getenv("FDM_DEBUG") ? SDL_getenv("FDM_DEBUG") : "", SDL_getenv("FDM") ? SDL_getenv("FDM") : "");
 }
 
 /* Read before Aeron_Init: the XR swapchains are sized at session start. */
@@ -1175,7 +1177,7 @@ int main(int argc, char** argv) {
 		int last_fullscreen = Aeron_Fullscreen();
 		/* VR: pause while the headset is off or the system menu is open
 		 * (XWA_XR_AUTO_PAUSE=0 keeps the game running). */
-		const char* xr_auto_pause_env = getenv("XWA_XR_AUTO_PAUSE");
+		const char* xr_auto_pause_env = SDL_getenv("XWA_XR_AUTO_PAUSE");
 		const int xr_auto_pause = !(xr_auto_pause_env && xr_auto_pause_env[0] == '0');
 		int xr_paused = 0;
 		while (!Aeron_QuitRequested() && !XwaPort_ShouldQuit()) {
@@ -1203,7 +1205,17 @@ int main(int argc, char** argv) {
 			const AeronInputSnapshot* in = Aeron_InputSnapshot();
 			int toggled = 0;
 			if (in) {
-				XwaPresentation_SyncToWindow(in->window_width, in->window_height);
+				/* In VR the 2D frame is the virtual screen's, whatever the
+				 * desktop window (a mirror) does: going fullscreen after the
+				 * XR start made the frame wider than the screen, and the 4:3
+				 * menus shrank inside the screen's frame. */
+				int xr_w = 0, xr_h = 0;
+				Aeron_XrScreenSize(&xr_w, &xr_h);
+				if (xr_w > 0 && xr_h > 0) {
+					XwaPresentation_SyncToWindow(xr_w, xr_h);
+				} else {
+					XwaPresentation_SyncToWindow(in->window_width, in->window_height);
+				}
 			}
 			/* Reconcile OS-initiated fullscreen transitions (e.g. the macOS
 			 * green button) into the stored option. Edge-triggered on the

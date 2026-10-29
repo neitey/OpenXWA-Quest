@@ -1,4 +1,5 @@
 #include "xwa_remaster/vr_hud_occlusion.h"
+#include <SDL3/SDL_stdinc.h>
 
 #include <math.h>
 #include <stdlib.h>
@@ -52,7 +53,7 @@ static struct {
 
 static int ho_enabled(void) {
 	if (!s_ho.enabled_checked) {
-		const char* env = getenv("XWA_XR_HUD_OCCLUDE");
+		const char* env = SDL_getenv("XWA_XR_HUD_OCCLUDE");
 		s_ho.enabled = !(env && env[0] == '0');
 		s_ho.enabled_checked = 1;
 	}
