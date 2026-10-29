@@ -15,6 +15,11 @@ extern "C" {
 
 /* Nonzero when the screen is offered (VR presenting, or an Android build). */
 int XwaModernVrOptions_Available(void);
+/* The optional X-Wing Revival cockpits are installed (their GLBs in the
+ * APK's revival_cockpits assets, next to the game on PC, or in
+ * XWA_XR_REVIVAL_COCKPITS): only then does VR Options offer "Cockpit Model"
+ * and the credits name them. Looked up once. */
+int XwaModernVrOptions_RevivalCockpitsInstalled(void);
 
 /* Draws and updates the screen. Returns nonzero when the caller should
  * return to the parent video menu. */
