@@ -1,4 +1,5 @@
 #include "xwa_remaster/vr_env.h"
+#include "xwa_runtime/runtime/vr_buttons.h"
 
 #include "aeron/aeron.h"
 #include "aeron/asset/opt_model.h"
@@ -6059,10 +6060,13 @@ static void env_title_update(void) {
 	if (!env_title_active()) {
 		/* X puts the screen away and brings it back (so do A and the
 		 * trigger); Y swaps the scene. */
-		if (Aeron_XrTakeMenuXPressed()) {
+		/* (Not while the mapping screen waits for a button press.) */
+		const int capture = XwaVrButtons_CaptureActive();
+		if (Aeron_XrTakeMenuXPressed() && !capture) {
 			s_dismiss.away = !s_dismiss.away;
 		}
-		if (Aeron_XrTakeMenuYPressed() && !MissionDebrief_ShowingFailure() && !MissionDebrief_ShowingSuccess()) {
+		if (Aeron_XrTakeMenuYPressed() && !capture && !MissionDebrief_ShowingFailure() &&
+			!MissionDebrief_ShowingSuccess()) {
 			env_next_scene(); /* (a debriefing keeps its scene) */
 		}
 		if (s_dismiss.away) {

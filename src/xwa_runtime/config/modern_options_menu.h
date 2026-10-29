@@ -21,6 +21,7 @@ typedef struct XwaModernOptionsMenu {
 	int row;
 	int cursor_row;
 	char key;
+	int row_height; /* Begin sets the default (20); a long page may set less */
 } XwaModernOptionsMenu;
 
 int XwaModernOptionsMenu_Begin(XwaModernOptionsMenu* menu, int center_x, int start_y, int* cursor_row,

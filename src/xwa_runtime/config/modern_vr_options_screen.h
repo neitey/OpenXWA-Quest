@@ -23,6 +23,8 @@ int XwaModernVrOptionsScreen_Update(int menu_center_x, int* cursor_row);
 /* Writes KEY=value into the VR settings file (Android, Windows; elsewhere a
  * no-op). */
 void XwaModernVrOptions_SaveValue(const char* key, const char* value);
+/* The same for several keys in one go (any count). */
+void XwaModernVrOptions_SaveValues(const char* const* keys, const char* const* values, int count);
 /* "Restore VR Defaults": every VR option and hand-placed spot back to the
  * recommended settings (applied now and saved; "(restart)" options take
  * effect at the next start). */

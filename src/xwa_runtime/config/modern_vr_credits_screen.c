@@ -30,11 +30,8 @@ static const CreditLine k_credits[] = {
 	{ CREDIT_TEXT, "Radial menu code borrowed from Team Beef's JK:Academy VR" },
 	{ CREDIT_GAP, NULL },
 	/* Optional, off by default (VR Options, "Cockpit Model"). */
-	{ CREDIT_HEADING, "Optional Cockpits (Off by Default)" },
-	{ CREDIT_FINE, "3D cockpits from X-Wing Revival" },
-	{ CREDIT_FINE, "(https://www.raptor007.com/x-wing-revival/) by Raptor007 (Blair Sherman)," },
-	{ CREDIT_FINE, "included with his permission; the models are originally by the" },
-	{ CREDIT_FINE, "X-Wing Alliance Upgrade team (https://xwaupgrade.com/)." },
+	{ CREDIT_HEADING, "Optional Cockpits" },
+	{ CREDIT_TEXT, "Raptor007 (X-Wing Revival) and the XWA Upgrade team" },
 	{ CREDIT_GAP, NULL },
 	{ CREDIT_HEADING, "Disclaimer" },
 	{ CREDIT_TEXT, "VR-specific code was generated using Claude AI." },

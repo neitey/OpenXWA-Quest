@@ -66,9 +66,8 @@ GitHub:
 
 ## Optional X-Wing Revival cockpits
 
-VR Options -> Cockpit Model can show the 3D cockpits from
-[X-Wing Revival](https://www.raptor007.com/x-wing-revival/) by Raptor007
-(Blair Sherman), included with his permission; the models are originally by
+VR Options -> Cockpit Model can show 3D cockpits by
+[Raptor007](https://www.raptor007.com/x-wing-revival/) (X-Wing Revival) and
 the [X-Wing Alliance Upgrade team](https://xwaupgrade.com/). They are
 optional and off by default (X-Wing Alliance's own cockpits). The models are
 not in this repository and not covered by its GPL. The packaging converts

@@ -28,14 +28,50 @@
 extern "C" {
 #endif
 
-/* Flight: a Touch button's game key (`shifted` is unused since the left
- * grip opens the quick wheel; always KEY_NONE). */
+/* Flight: a button's game key from the player's mapping (vr_mapping.h):
+ * `plain` without Alt, `shifted` with an Alt grip held (KEY_NONE where that
+ * function is not one game key: fire, the quick wheel, voice, the lap
+ * console's own actions, or unbound). Static storage, valid until the next
+ * call. */
 typedef struct XwaVrButtonBinding {
 	uint16_t plain;
 	uint16_t shifted;
 } XwaVrButtonBinding;
 
 const XwaVrButtonBinding* XwaVrButtons_Binding(AeronXrButton button);
+/* The function (vr_mapping.h id) on a button: without Alt (0 for a grip set
+ * as Alt) or its Alt one (0 when unbound or Alt is off). */
+int XwaVrButtons_Function(AeronXrButton button, int alt);
+int XwaVrButtons_IsAltGrip(AeronXrButton button);
+/* What a button does, for labels: "Next target", "Fire", "Hold: quick
+ * wheel", "Hold: Alt" (a grip set as Alt); `alt` its Alt function. Empty
+ * when nothing. */
+void XwaVrButtons_SlotText(AeronXrButton button, int alt, char* out, size_t size);
+/* An Alt grip held now (game-owned grips are a grab, not Alt). */
+int XwaVrButtons_AltHeld(void);
+/* The physical controller (0 left, 1 right) a button is on now. */
+int XwaVrButtons_SlotHand(AeronXrButton button);
+/* The button exists on the controllers in use (the Steam Frame's d-pad and
+ * bumpers only with Frame controllers). */
+int XwaVrButtons_SlotPresent(AeronXrButton button);
+
+/* The quick wheel on a button: a grip holds it open; any other button opens
+ * it with a press and closes it with the next (WheelToggle, from the flight
+ * buttons). WheelSource: where it is wanted now - `hand` physical, `grip`
+ * 1 when held open by that hand's grip (the caller reads the grip);
+ * `squeezing` has bit h set while grip h is squeezed. 0 = nowhere. */
+void XwaVrButtons_WheelToggle(AeronXrButton button);
+void XwaVrButtons_WheelClose(void);
+int XwaVrButtons_WheelSource(int* hand, int* grip, uint32_t squeezing);
+/* Voice commands on a button: whether any button has it, and whether one
+ * on physical controller `hand` is held now. */
+int XwaVrButtons_VoiceButtons(void);
+int XwaVrButtons_VoiceHeld(int hand);
+/* While the mapping screen waits for a button press (set every frame; it
+ * lapses 0.4 s after the last): the menus' own uses of B, X and Y (back,
+ * screen away, scene) stay off. */
+void XwaVrButtons_SetCaptureActive(int active);
+int XwaVrButtons_CaptureActive(void);
 
 /* B (plain) leaves the map instead of its flight action. */
 #define XWA_VR_MAP_EXIT_BUTTON AERON_XR_BUTTON_B
@@ -60,8 +96,6 @@ const XwaVrButtonBinding* XwaVrButtons_Binding(AeronXrButton button);
  * every other button stay where they are. Aeron does the swap
  * (Aeron_XrSetSwapSticks, set by port.c while the flight buttons are on). */
 int XwaVrButtons_SticksSwapped(void);
-/* The right grip on its own: countermeasures (its binding above, C). */
-#define XWA_VR_RIGHT_GRIP_ACTION "Countermeasures"
 
 /* The lap console's (and voice commands') game key for `action`;
  * KEY_NONE for the ones that are not a single key. */
@@ -74,7 +108,7 @@ uint16_t XwaVrButtons_ConsoleKey(XwaVrConsoleAction action);
  * B is "Y", the left trigger "right trigger", and so on. */
 const char* XwaVrButtons_ButtonName(AeronXrButton button, int compact);
 
-/* The control that sends `key` in flight, e.g. "B" or "grip + B" ("grip+B"
+/* The control that sends `key` in flight, e.g. "B" or "Alt + B" ("Alt+B"
  * when compact); "console" when only the lap console / voice has it; NULL
  * when nothing does. Static storage, valid until the next call. */
 const char* XwaVrButtons_KeyLabel(uint16_t key, int compact);

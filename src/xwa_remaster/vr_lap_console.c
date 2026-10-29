@@ -13,6 +13,7 @@
 #include "xwa_remaster/vr_flight_stick.h"
 #include "aeron/asset/opt_model.h"
 #include "xwa_runtime/runtime/vr_buttons.h"
+#include "xwa_runtime/runtime/vr_mapping.h"
 #include "xwa_runtime/snapshot/snapshot.h"
 
 #include <SDL3/SDL_stdinc.h>
@@ -2033,7 +2034,19 @@ static void vw_activate(void) {
  * button card had their turn with the grips): opens, steers and closes. */
 static void vw_update(const AeronXrView views[2]) {
 	static const float minus_z[3] = { 0.0f, 0.0f, -1.0f };
-	const int hand = Aeron_XrLeftHanded() ? 1 : 0;
+	/* Where the player's mapping has the wheel (VR Options > Controller
+	 * Buttons): held open by a grip (the left one by default), or opened and
+	 * closed by presses of another button. */
+	uint32_t squeezing = 0;
+	for (int h = 0; h < 2; ++h) {
+		AeronXrHand g;
+		if (Aeron_XrGetHand(h, &g) && g.grip >= VC_GRIP_ON) {
+			squeezing |= 1u << h;
+		}
+	}
+	int hand = Aeron_XrLeftHanded() ? 1 : 0;
+	int by_grip = 1;
+	const int wanted = XwaVrButtons_WheelSource(&hand, &by_grip, squeezing);
 	AeronXrHand xh;
 	memset(&xh, 0, sizeof xh);
 	const int tracked = Aeron_XrGetHand(hand, &xh);
@@ -2042,9 +2055,13 @@ static void vw_update(const AeronXrView views[2]) {
 		vw_close();
 	}
 	const int was_held = s_vw.grip_held;
-	s_vw.grip_held = tracked && (was_held ? xh.grip > VC_GRIP_OFF : xh.grip >= VC_GRIP_ON);
-	if (!s_vc.state.valid || !vw_enabled() || s_vc.font_state != 1 || !tracked) {
+	s_vw.grip_held = wanted && tracked &&
+					 (!by_grip || (was_held ? xh.grip > VC_GRIP_OFF : xh.grip >= VC_GRIP_ON));
+	if (!s_vc.state.valid || !vw_enabled() || s_vc.font_state != 1 || !tracked || !wanted) {
 		vw_close();
+		if (!s_vc.state.valid) {
+			XwaVrButtons_WheelClose();
+		}
 		return;
 	}
 	if (!s_vw.open) {
@@ -2057,7 +2074,7 @@ static void vw_update(const AeronXrView views[2]) {
 		for (int c = 0; c < VC_CARDS; ++c) {
 			owned |= s_vc.cards[c].place.grab_hand == hand + 1 || s_vc.cards[c].place.hover_side[hand];
 		}
-		if (owned) {
+		if (owned && by_grip) {
 			return;
 		}
 		s_vw.open = 1;
@@ -2351,17 +2368,23 @@ static void lb_set_action(LbEntry* e, const char* text) {
 	e->action[0] = (char)toupper((unsigned char)e->action[0]);
 }
 
+/* What the button does in the player's mapping (never the keyboard key
+ * behind it); its Alt function on the second line. */
 static int lb_from_binding(LbEntry* e, AeronXrButton button) {
-	const uint16_t key = XwaVrButtons_Binding(button)->plain;
-	if (key == 0u /* KEY_NONE */) {
+	static char alt_line[2][AERON_XR_BUTTON_COUNT][64];
+	char text[64];
+	XwaVrButtons_SlotText(button, 0, text, sizeof text);
+	if (!text[0]) {
 		return 0;
 	}
-	/* What the button does, never the keyboard key behind it. */
-	const char* action = XwaVrButtons_KeyAction(key);
-	if (!action) {
-		return 0;
+	lb_set_action(e, text);
+	char alt[48];
+	XwaVrButtons_SlotText(button, 1, alt, sizeof alt);
+	if (alt[0]) {
+		char* line = alt_line[XwaVrButtons_SlotHand(button) & 1][button];
+		snprintf(line, sizeof alt_line[0][0], "Alt: %s", alt);
+		e->more = line;
 	}
-	lb_set_action(e, action);
 	return 1;
 }
 
@@ -2379,23 +2402,24 @@ static int lb_entries(int hand, const AeronXrHand* xh, LbEntry* out) {
 		switch (ctl) {
 			case XWA_VR_CTL_TRIGGER:
 				e->control = "TRIGGER";
-				if (right_role) {
-					lb_set_action(e, "Fire");
-				} else {
-					ok = lb_from_binding(e, AERON_XR_BUTTON_LEFT_TRIGGER);
+				ok = lb_from_binding(e, right_role ? AERON_XR_BUTTON_RIGHT_TRIGGER : AERON_XR_BUTTON_LEFT_TRIGGER);
+				if (chord) {
+					e->more = chord;
 				}
-				e->more = chord;
 				e->pressed = xh->trigger > 0.5f;
 				break;
 			case XWA_VR_CTL_GRIP:
 				e->control = "GRIP";
-				if (right_role) {
-					lb_set_action(e, XWA_VR_RIGHT_GRIP_ACTION);
-				} else if (vw_enabled()) {
-					lb_set_action(e, "Radial menu");
-					e->more = "hold, point, pull the trigger";
-				} else {
-					ok = 0;
+				{
+					const AeronXrButton grip = right_role ? AERON_XR_BUTTON_RIGHT_GRIP : AERON_XR_BUTTON_LEFT_GRIP;
+					const int fn = XwaVrButtons_Function(grip, 0);
+					if (!XwaVrButtons_IsAltGrip(grip) && XwaVrMap_FunctionInfo(fn)->kind == XWA_VRF_KIND_WHEEL) {
+						ok = vw_enabled();
+						lb_set_action(e, "Radial menu");
+						e->more = "hold, point, pull the trigger";
+					} else {
+						ok = lb_from_binding(e, grip);
+					}
 				}
 				e->pressed = xh->grip > 0.5f;
 				break;
@@ -2814,7 +2838,7 @@ static const VcCardLabel k_card_left[] = {
 	{ CTL_UPPER, AERON_XR_BUTTON_Y, NULL, NULL, 168.0f },
 	{ CTL_LOWER, AERON_XR_BUTTON_X, NULL, NULL, 232.0f },
 	{ CTL_MENU, -1, "Pause / menu", NULL, 296.0f },
-	{ CTL_GRIP, -1, "Hold: radial menu", "on a panel or the stick: move it", 380.0f },
+	{ CTL_GRIP, AERON_XR_BUTTON_LEFT_GRIP, NULL, "on a panel or the stick: move it", 380.0f },
 	{ CTL_TRIGGER, AERON_XR_BUTTON_LEFT_TRIGGER, NULL, NULL, 452.0f },
 };
 
@@ -2823,8 +2847,8 @@ static const VcCardLabel k_card_right[] = {
 	{ CTL_UPPER, AERON_XR_BUTTON_B, NULL, NULL, 168.0f },
 	{ CTL_LOWER, AERON_XR_BUTTON_A, NULL, NULL, 232.0f },
 	{ CTL_MENU, -1, "Meta: system menu", NULL, 296.0f },
-	{ CTL_GRIP, -1, XWA_VR_RIGHT_GRIP_ACTION, "on the flight stick: fly with it", 380.0f },
-	{ CTL_TRIGGER, -1, "Fire", XWA_VR_CHORD_LABEL ": land / hyperspace", 452.0f },
+	{ CTL_GRIP, AERON_XR_BUTTON_RIGHT_GRIP, NULL, "on the flight stick: fly with it", 380.0f },
+	{ CTL_TRIGGER, AERON_XR_BUTTON_RIGHT_TRIGGER, NULL, XWA_VR_CHORD_LABEL ": land / hyperspace", 452.0f },
 };
 
 /* Left-handed controls (Aeron_XrLeftHanded): the controllers trade their
@@ -2836,8 +2860,8 @@ static const VcCardLabel k_card_left_lh[] = {
 	{ CTL_UPPER, AERON_XR_BUTTON_B, NULL, NULL, 168.0f },
 	{ CTL_LOWER, AERON_XR_BUTTON_A, NULL, NULL, 232.0f },
 	{ CTL_MENU, -1, "Pause / menu", NULL, 296.0f },
-	{ CTL_GRIP, -1, XWA_VR_RIGHT_GRIP_ACTION, "on a panel or the stick: move it", 380.0f },
-	{ CTL_TRIGGER, -1, "Fire", XWA_VR_CHORD_LABEL ": land / hyperspace", 452.0f },
+	{ CTL_GRIP, AERON_XR_BUTTON_RIGHT_GRIP, NULL, "on a panel or the stick: move it", 380.0f },
+	{ CTL_TRIGGER, AERON_XR_BUTTON_RIGHT_TRIGGER, NULL, XWA_VR_CHORD_LABEL ": land / hyperspace", 452.0f },
 };
 
 static const VcCardLabel k_card_right_lh[] = {
@@ -2845,19 +2869,11 @@ static const VcCardLabel k_card_right_lh[] = {
 	{ CTL_UPPER, AERON_XR_BUTTON_Y, NULL, NULL, 168.0f },
 	{ CTL_LOWER, AERON_XR_BUTTON_X, NULL, NULL, 232.0f },
 	{ CTL_MENU, -1, "Meta: system menu", NULL, 296.0f },
-	{ CTL_GRIP, -1, "Hold: radial menu", "on the flight stick: fly with it", 380.0f },
+	{ CTL_GRIP, AERON_XR_BUTTON_LEFT_GRIP, NULL, "on the flight stick: fly with it", 380.0f },
 	{ CTL_TRIGGER, AERON_XR_BUTTON_LEFT_TRIGGER, NULL, NULL, 452.0f },
 };
 
-/* "next target": what a key does (the keyboard key itself is never
- * shown in VR). */
-static void vc_card_key_text(char* out, size_t size, uint16_t key, int with_key) {
-	const char* action = XwaVrButtons_KeyAction(key);
-	(void)with_key;
-	snprintf(out, size, "%s", action ? action : "");
-}
-
-/* The two label lines of a control, from its bindings. */
+/* The two label lines of a control, from the player's mapping. */
 static void vc_card_label_text(const VcCardLabel* l, char* action, char* more, size_t size) {
 	const char* fixed = l->fixed;
 	if (l->part == CTL_STICK && XwaVrButtons_SticksSwapped()) {
@@ -2869,29 +2885,33 @@ static void vc_card_label_text(const VcCardLabel* l, char* action, char* more, s
 	if (l->button < 0) {
 		return;
 	}
-	const XwaVrButtonBinding* b = XwaVrButtons_Binding((AeronXrButton)l->button);
+	const AeronXrButton button = (AeronXrButton)l->button;
 	char plain[64] = "", shifted[64] = "";
-	if (b->plain) {
-		vc_card_key_text(plain, sizeof plain, b->plain, 1);
+	XwaVrButtons_SlotText(button, 0, plain, sizeof plain);
+	XwaVrButtons_SlotText(button, 1, shifted, sizeof shifted);
+	if (plain[0]) {
+		plain[0] = (char)tolower((unsigned char)plain[0]);
 	}
-	if (b->shifted) {
-		vc_card_key_text(shifted, sizeof shifted, b->shifted, b->shifted == 0x20 /* Space */);
+	if (shifted[0]) {
+		shifted[0] = (char)tolower((unsigned char)shifted[0]);
 	}
 	const int face = l->part == CTL_UPPER || l->part == CTL_LOWER;
 	if (l->part == CTL_STICK) {
 		/* The stick's axes are its role; the click goes below. */
 		snprintf(more, size, "%s%s%s%s%s", plain[0] ? "click: " : "", plain, plain[0] && shifted[0] ? "   " : "",
-				 shifted[0] ? "grip+: " : "", shifted);
+				 shifted[0] ? "Alt: " : "", shifted);
 		return;
 	}
 	if (face) {
-		snprintf(action, size, "%s: %s", XwaVrButtons_ButtonName((AeronXrButton)l->button, 0), plain);
+		snprintf(action, size, "%s: %s", XwaVrButtons_ButtonName(button, 0), plain);
 	} else {
 		snprintf(action, size, "%s", plain);
 		action[0] = (char)toupper((unsigned char)action[0]);
 	}
-	snprintf(more, size, "%s%s%s", shifted[0] ? "grip+: " : "", shifted,
-			 l->button == XWA_VR_MAP_EXIT_BUTTON ? "   map: exit" : "");
+	if (shifted[0] || face) {
+		snprintf(more, size, "%s%s%s", shifted[0] ? "Alt: " : "", shifted,
+				 button == XWA_VR_MAP_EXIT_BUTTON ? "   map: exit" : "");
+	}
 }
 
 /* Smooth open/closed path through `pts` (Catmull-Rom), offset and
@@ -3749,8 +3769,10 @@ int XwaVrConsole_CardFrame(AeronCommandBuffer* cmd, int card, int width, int hei
 			key = (key ^ (uint32_t)words[i]) * 1099511628211ull;
 		}
 		for (int b = 0; b < AERON_XR_BUTTON_COUNT; ++b) {
-			const XwaVrButtonBinding* bb = XwaVrButtons_Binding((AeronXrButton)b);
-			key = (key ^ (bb ? ((uint32_t)bb->plain << 16 | bb->shifted) : 0u)) * 1099511628211ull;
+			const uint32_t fns = (uint32_t)XwaVrButtons_Function((AeronXrButton)b, 0) << 16 |
+								 (uint32_t)XwaVrButtons_Function((AeronXrButton)b, 1) << 8 |
+								 (uint32_t)XwaVrButtons_IsAltGrip((AeronXrButton)b);
+			key = (key ^ fns) * 1099511628211ull;
 		}
 		key |= 1u; /* never 0 */
 	}

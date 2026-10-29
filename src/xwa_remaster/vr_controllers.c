@@ -964,6 +964,8 @@ static int ct_runtime_load(CtRuntime* rt, AeronCommandBuffer* cmd, int hand, con
 	uint32_t list_n[3] = { 0, 0, 0 }, list_cap[3] = { 0, 0, 0 };
 	AeronGltfMaterial* mats = NULL;
 	uint32_t* prim_material = NULL;
+	float* skin_m = NULL; /* a skinned mesh's joint matrices (joint * inverse bind), model space */
+	float bb_min[3] = { 1e9f, 1e9f, 1e9f }, bb_max[3] = { -1e9f, -1e9f, -1e9f }; /* at rest, model space */
 	CtUpload u;
 	memset(&u, 0, sizeof u);
 	if (cgltf_load_buffers(&options, data, NULL) != cgltf_result_success) {
@@ -1161,6 +1163,32 @@ static int ct_runtime_load(CtRuntime* rt, AeronCommandBuffer* cmd, int hand, con
 		} else {
 			m4_identity(to_model);
 		}
+		/* A skinned mesh (Meta's) is placed by its joints, joint * inverse
+		 * bind matrix, as glTF says: its own node's transform is ignored.
+		 * Where the two disagree, the node's transform draws it turned. */
+		const cgltf_skin* node_skin = data->nodes[i].skin;
+		free(skin_m);
+		skin_m = NULL;
+		if (node_skin && node_skin->joints_count && cn->slot == 0) {
+			skin_m = (float*)malloc(node_skin->joints_count * 16 * sizeof(float));
+			if (!skin_m) {
+				goto done;
+			}
+			for (cgltf_size j = 0; j < node_skin->joints_count; ++j) {
+				float ibm[16];
+				m4_identity(ibm);
+				if (node_skin->inverse_bind_matrices && j < node_skin->inverse_bind_matrices->count) {
+					cgltf_accessor_read_float(node_skin->inverse_bind_matrices, j, ibm, 16);
+				}
+				if (node_skin->joints[j]) {
+					m4_mul(rt->nodes[node_skin->joints[j] - data->nodes].rest_world, ibm, &skin_m[j * 16]);
+				} else {
+					memcpy(&skin_m[j * 16], cn->rest_world, 16 * sizeof(float));
+				}
+			}
+		}
+		float skin_off_max = 0.0f; /* how far the skin moves a vertex from where its node puts it */
+		int skin_used = 0;
 		for (cgltf_size p = 0; p < mesh->primitives_count; ++p, ++prim_id) {
 			const cgltf_primitive* prim = &mesh->primitives[p];
 			prim_material[prim_id] = prim->material ? (uint32_t)(prim->material - data->materials) : mat_count - 1;
@@ -1197,9 +1225,9 @@ static int ct_runtime_load(CtRuntime* rt, AeronCommandBuffer* cmd, int hand, con
 				ct_read(pos, v, pp, 3);
 				ct_read(nrm, v, nn, 3);
 				ct_read(uv, v, tt, 2);
-				/* The controls' centres, in model space at rest. */
-				float rest[3];
-				m4_point(cn->rest_world, pp, rest);
+				/* Where the vertex is at rest, in model space. */
+				float vert_m[16];
+				memcpy(vert_m, cn->rest_world, sizeof vert_m);
 				int owner = (int)i; /* the node whose part the vertex is */
 				if (joints) {
 					float jw[4] = { 0, 0, 0, 0 }, jj[4] = { 0, 0, 0, 0 };
@@ -1213,6 +1241,39 @@ static int ct_runtime_load(CtRuntime* rt, AeronCommandBuffer* cmd, int hand, con
 					if (jw[best] > 0.0f && j < skin->joints_count && skin->joints[j]) {
 						owner = (int)(skin->joints[j] - data->nodes);
 					}
+					if (skin_m) {
+						float sm[16], wsum = 0.0f;
+						memset(sm, 0, sizeof sm);
+						for (int k = 0; k < 4; ++k) {
+							const cgltf_size jk = (cgltf_size)(jj[k] + 0.5f);
+							if (jw[k] > 0.0f && jk < skin->joints_count) {
+								for (int e = 0; e < 16; ++e) {
+									sm[e] += jw[k] * skin_m[jk * 16 + e];
+								}
+								wsum += jw[k];
+							}
+						}
+						if (wsum > 1e-6f) {
+							for (int e = 0; e < 16; ++e) {
+								vert_m[e] = sm[e] / wsum;
+							}
+							float by_node[3], by_skin[3];
+							m4_point(cn->rest_world, pp, by_node);
+							m4_point(vert_m, pp, by_skin);
+							const float dx = by_skin[0] - by_node[0], dy = by_skin[1] - by_node[1],
+										dz = by_skin[2] - by_node[2];
+							const float d = sqrtf(dx * dx + dy * dy + dz * dz);
+							skin_off_max = d > skin_off_max ? d : skin_off_max;
+							skin_used = 1;
+						}
+					}
+				}
+				/* The controls' centres, in model space at rest. */
+				float rest[3];
+				m4_point(vert_m, pp, rest);
+				for (int k = 0; k < 3; ++k) {
+					bb_min[k] = rest[k] < bb_min[k] ? rest[k] : bb_min[k];
+					bb_max[k] = rest[k] > bb_max[k] ? rest[k] : bb_max[k];
 				}
 				for (int c = 0; c < XWA_VR_CTL_COUNT; ++c) {
 					for (int q = owner; q >= 0 && rt->ctl_node[c] >= 0; q = rt->nodes[q].parent) {
@@ -1226,8 +1287,9 @@ static int ct_runtime_load(CtRuntime* rt, AeronCommandBuffer* cmd, int hand, con
 					}
 				}
 				float mp[3], mn[3];
-				m4_point(to_model, pp, mp);
-				m4_vector(to_model, nn, mn);
+				const float* place = cn->slot == 0 ? vert_m : to_model;
+				m4_point(place, pp, mp);
+				m4_vector(place, nn, mn);
 				ct_norm(mn);
 				const uint32_t vi = ct_vertex(&b, mp, prim_id, (float)cn->slot, tt[0], tt[1]);
 				memcpy(b.v[vi].normal, mn, sizeof mn);
@@ -1263,7 +1325,17 @@ static int ct_runtime_load(CtRuntime* rt, AeronCommandBuffer* cmd, int hand, con
 				}
 			}
 		}
+		if (node_skin) {
+			Aeron_LogInfo("xwa.remaster",
+						  "  %s mesh \"%s\": skin of %u joints (%s inverse binds)%s, %.1f mm at most from its node's "
+						  "transform",
+						  hand ? "right" : "left", cn->name, (unsigned)node_skin->joints_count,
+						  node_skin->inverse_bind_matrices ? "with" : "no", skin_used ? ", placed by the skin" : "",
+						  (double)(skin_off_max * 1000.0f));
+		}
 	}
+	free(skin_m);
+	skin_m = NULL;
 	if (b.vn == 0) {
 		Aeron_LogWarn("xwa.remaster", "controller model: no triangles");
 		goto done;
@@ -1410,15 +1482,42 @@ static int ct_runtime_load(CtRuntime* rt, AeronCommandBuffer* cmd, int hand, con
 					  "%d of %d images, %d controls found by name",
 					  hand ? "right" : "left", rm->name, b.vn, b.in / 3, rt->cut.in / 3, rt->node_count,
 					  rt->slot_count - 1, any_image ? image_count : 0, image_count, matched);
+		Aeron_LogInfo("xwa.remaster",
+					  "  %s model bounds at rest (grip space): x %.1f .. %.1f, y %.1f .. %.1f, z %.1f .. %.1f mm",
+					  hand ? "right" : "left", (double)(bb_min[0] * 1000.0f), (double)(bb_max[0] * 1000.0f),
+					  (double)(bb_min[1] * 1000.0f), (double)(bb_max[1] * 1000.0f), (double)(bb_min[2] * 1000.0f),
+					  (double)(bb_max[2] * 1000.0f));
 		for (int i = 0; i < rt->node_count && i < 64; ++i) {
-			Aeron_LogInfo("xwa.remaster", "  node %d \"%s\" parent %d%s%s", i, rt->nodes[i].name, rt->nodes[i].parent,
-						  data->nodes[i].mesh ? " mesh" : "", rt->nodes[i].animatable >= 0 ? " moving" : "");
+			const cgltf_node* n = &data->nodes[i];
+			char xf[160] = "";
+			if (n->has_matrix) {
+				snprintf(xf, sizeof xf, " matrix");
+			} else {
+				int at = 0;
+				if (n->has_translation && at < (int)sizeof xf) {
+					at += snprintf(xf + at, sizeof xf - (size_t)at, " t %.1f %.1f %.1f mm",
+								   (double)(n->translation[0] * 1000.0f), (double)(n->translation[1] * 1000.0f),
+								   (double)(n->translation[2] * 1000.0f));
+				}
+				if (n->has_rotation && at < (int)sizeof xf) {
+					at += snprintf(xf + at, sizeof xf - (size_t)at, " r %.3f %.3f %.3f %.3f", (double)n->rotation[0],
+								   (double)n->rotation[1], (double)n->rotation[2], (double)n->rotation[3]);
+				}
+				if (n->has_scale && at < (int)sizeof xf) {
+					snprintf(xf + at, sizeof xf - (size_t)at, " s %.3f %.3f %.3f", (double)n->scale[0],
+							 (double)n->scale[1], (double)n->scale[2]);
+				}
+			}
+			Aeron_LogInfo("xwa.remaster", "  node %d \"%s\" parent %d%s%s%s%s", i, rt->nodes[i].name,
+						  rt->nodes[i].parent, n->mesh ? " mesh" : "", n->skin ? " skinned" : "",
+						  rt->nodes[i].animatable >= 0 ? " moving" : "", xf);
 		}
 	}
 done:
 	for (int c = 0; c < AERON_GLTF_CHANNEL_COUNT; ++c) {
 		free(u.channels[c].data);
 	}
+	free(skin_m);
 	free(atlas);
 	free(b.v);
 	free(b.idx);

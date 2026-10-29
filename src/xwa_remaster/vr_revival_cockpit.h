@@ -2,10 +2,9 @@
  * cockpit OPTs (VR Options, "Cockpit Model"; XWA's own cockpits are the
  * default).
  *
- * X-Wing Revival (https://www.raptor007.com/x-wing-revival/) is by Raptor007
- * (Blair Sherman); its cockpit models are originally by the X-Wing Alliance
- * Upgrade team (https://xwaupgrade.com/). They are bundled with permission
- * but are not part of this repository: packaging/quest/tools/
+ * The cockpits are by Raptor007 (X-Wing Revival) and the X-Wing Alliance
+ * Upgrade team. They are bundled in the APK but are not part of this
+ * repository: packaging/quest/tools/
  * gen_revival_cockpits.py converts them at package time into GLBs
  * whose vertices are metres in the pilot's eye frame (x right, y down,
  * z forward after Aeron's glTF import), the eye at the origin:

@@ -50,6 +50,7 @@
 #include "xwa_runtime/runtime/movie_task.h"
 #include "xwa_runtime/runtime/presentation.h"
 #include "xwa_runtime/runtime/vr_buttons.h"
+#include "xwa_runtime/runtime/vr_mapping.h"
 #include "xwa_runtime/snapshot/snapshot.h"
 #include "xwa_runtime/timing/host_clock.h"
 
@@ -259,9 +260,11 @@ static int XwaPort_VrMapOpen(void) {
 static struct {
 	int down[2];
 	uint64_t down_ms[2];
-	int fired;           /* chord fired; wait for both triggers released */
-	int warhead_pending; /* deferred left-trigger press */
+	int fired;      /* chord fired; wait for both triggers released */
+	int pending[2]; /* deferred trigger press (its function), per physical hand */
 } g_vrChord;
+
+static void XwaPort_RunVrFunction(AeronXrButton button, int fn);
 
 static void XwaPort_UpdateVrChord(int enabled) {
 	AeronXrHand hand[2];
@@ -278,13 +281,15 @@ static void XwaPort_UpdateVrChord(int enabled) {
 			g_vrChord.down_ms[h] = now;
 		} else if (g_vrChord.down[h] && t < VR_CHORD_RELEASE) {
 			g_vrChord.down[h] = 0;
-			/* The warhead trigger is the left one, the right one left-handed. */
-			if (h == (Aeron_XrLeftHanded() ? 1 : 0) && g_vrChord.warhead_pending) {
-				/* A plain left-trigger pull after all. */
+			if (g_vrChord.pending[h]) {
+				/* A plain trigger pull after all. */
 				if (!g_vrChord.fired) {
-					XwaPort_QueueFlightActionKey(XwaVrButtons_Binding(AERON_XR_BUTTON_LEFT_TRIGGER)->plain);
+					XwaPort_RunVrFunction(h == XwaVrButtons_SlotHand(AERON_XR_BUTTON_LEFT_TRIGGER)
+											  ? AERON_XR_BUTTON_LEFT_TRIGGER
+											  : AERON_XR_BUTTON_RIGHT_TRIGGER,
+										  g_vrChord.pending[h]);
 				}
-				g_vrChord.warhead_pending = 0;
+				g_vrChord.pending[h] = 0;
 			}
 		}
 	}
@@ -299,13 +304,39 @@ static void XwaPort_UpdateVrChord(int enabled) {
 		return;
 	}
 	g_vrChord.fired = 1;
-	g_vrChord.warhead_pending = 0;
+	g_vrChord.pending[0] = g_vrChord.pending[1] = 0;
 	if (hyper) {
 		XwaPort_VrConsoleAction(XWA_VRC_HYPERSPACE, 0);
 	} else {
 		XwaPort_QueueFlightActionKey(KEY_SPACE);
 	}
 	XwaPort_VrButtonTick();
+}
+
+/* One press of a mapped function (vr_mapping.h). Fire, voice and a quick
+ * wheel on a grip work by holding and do nothing here. */
+static void XwaPort_RunVrFunction(AeronXrButton button, int fn) {
+	const XwaVrFunction* f = XwaVrMap_FunctionInfo(fn);
+	Aeron_LogInfo("xwa.vr", "button %s%s: %s", XwaVrButtons_AltHeld() ? "Alt+" : "", XwaVrButtons_ButtonName(button, 1),
+				  f->name);
+	switch (f->kind) {
+		case XWA_VRF_KIND_KEY:
+			if (XwaPort_QueueFlightActionKey(f->key)) {
+				XwaPort_VrButtonTick();
+			}
+			break;
+		case XWA_VRF_KIND_CONSOLE:
+			XwaPort_VrConsoleAction((XwaVrConsoleAction)f->action, f->arg);
+			XwaPort_VrButtonTick();
+			break;
+		case XWA_VRF_KIND_WHEEL:
+			if (button != AERON_XR_BUTTON_LEFT_GRIP && button != AERON_XR_BUTTON_RIGHT_GRIP) {
+				XwaVrButtons_WheelToggle(button);
+			}
+			break;
+		default:
+			break;
+	}
 }
 
 static void XwaPort_UpdateVrFlightButtons(int enabled) {
@@ -325,36 +356,46 @@ static void XwaPort_UpdateVrFlightButtons(int enabled) {
 	Aeron_XrSetSwapSticks(enabled && XwaVrButtons_SticksSwapped());
 	XwaPort_UpdateVrChord(enabled);
 	if (!enabled) {
-		g_vrChord.warhead_pending = 0;
+		g_vrChord.pending[0] = g_vrChord.pending[1] = 0;
+		XwaVrButtons_WheelClose();
 		return;
 	}
+	const XwaVrMapping* map = XwaVrMap_Current();
+	/* Fire on whichever buttons have it now (an Alt grip may change that). */
+	Aeron_XrSetFireButtons(XwaVrMap_SlotsOfKind(map, XWA_VRF_KIND_FIRE, Aeron_XrFlightButtonsHeld()));
 	const int chord_offered = XwaPort_VrChordEligible(&hyper);
 	while (Aeron_XrPollButton(&button, &shifted)) {
-		uint16_t key;
-		if ((int)button < 0 || (int)button >= AERON_XR_BUTTON_COUNT) {
+		(void)shifted;
+		if ((int)button < 0 || (int)button >= AERON_XR_BUTTON_COUNT || !XwaVrButtons_SlotPresent(button)) {
 			continue;
 		}
+		const int alt = XwaVrButtons_AltHeld();
+		const int fn = XwaVrMap_Effective(map, button, alt);
 		/* The craft is lost and loading the quick save is offered: A loads
 		 * it, B carries on to the mission's end. */
-		if (!shifted && (button == AERON_XR_BUTTON_A || button == AERON_XR_BUTTON_B) &&
+		if (!alt && (button == AERON_XR_BUTTON_A || button == AERON_XR_BUTTON_B) &&
 			XwaFlightCheckpoints_OfferAnswer(button == AERON_XR_BUTTON_A)) {
 			XwaPort_VrButtonTick();
 			continue;
 		}
-		if (button == AERON_XR_BUTTON_LEFT_TRIGGER && !shifted && chord_offered) {
-			/* Decided on release (or dropped by the chord). */
-			if (!g_vrChord.fired) {
-				g_vrChord.warhead_pending = 1;
+		if (button == XWA_VR_MAP_EXIT_BUTTON && !alt && XwaPort_VrMapOpen()) {
+			/* B leaves the map (the map view says so). */
+			if (XwaPort_QueueFlightActionKey(KEY_M)) {
+				XwaPort_VrButtonTick();
 			}
 			continue;
 		}
-		key = shifted ? XwaVrButtons_Binding(button)->shifted : XwaVrButtons_Binding(button)->plain;
-		if (button == XWA_VR_MAP_EXIT_BUTTON && !shifted && XwaPort_VrMapOpen()) {
-			key = KEY_M; /* B leaves the map (the map view says so) */
+		const int kind = XwaVrMap_FunctionInfo(fn)->kind;
+		if ((button == AERON_XR_BUTTON_LEFT_TRIGGER || button == AERON_XR_BUTTON_RIGHT_TRIGGER) && chord_offered &&
+			(kind == XWA_VRF_KIND_KEY || kind == XWA_VRF_KIND_CONSOLE)) {
+			/* Both triggers land / jump: a trigger's own press is decided on
+			 * its release (or dropped by the chord). */
+			if (!g_vrChord.fired) {
+				g_vrChord.pending[XwaVrButtons_SlotHand(button)] = fn;
+			}
+			continue;
 		}
-		if (XwaPort_QueueFlightActionKey(key)) {
-			XwaPort_VrButtonTick();
-		}
+		XwaPort_RunVrFunction(button, fn);
 	}
 }
 
@@ -772,6 +813,9 @@ static void XwaPort_UpdateVrModes(void) {
 static void XwaPort_ServiceVrBack(int modal) {
 	if (!Aeron_XrTakeMenuBPressed()) {
 		return;
+	}
+	if (XwaVrButtons_CaptureActive()) {
+		return; /* the mapping screen waits for a button: B is one */
 	}
 	if (modal || FrontendScreen_IsModalActive()) {
 		XwaInputBridge_InjectFrontendChar(27);

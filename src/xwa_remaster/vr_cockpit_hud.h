@@ -40,6 +40,13 @@ void XwaVrCockpitHud_RenderOverlay(AeronCommandBuffer* cmd, AeronRenderPass* pas
 
 void XwaVrCockpitHud_Shutdown(void);
 
+/* The player's seat position (VR Options "Seat Position",
+ * XWA_XR_SEAT_POSITION): metres further back from the window, -0.2 (closer)
+ * .. 0.2 (further), 0 by default. The cockpit (flight.c) and these panels
+ * move away from the eye by it, so the panels stay on their cockpit spots;
+ * hand-placed panels are stored as at 0 and follow it too. */
+float XwaVrCockpitHud_SeatBack(void);
+
 #ifdef __cplusplus
 }
 #endif

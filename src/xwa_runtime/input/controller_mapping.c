@@ -381,54 +381,134 @@ int16_t XwaControllerMapping_XrStickCurve(int16_t value, double deadzone, double
 	return (int16_t)(value < 0 ? -out : out);
 }
 
+static double ControllerMapping_AxisUnit(int16_t value) { return value < 0 ? value / 32768.0 : value / 32767.0; }
+
+static int16_t ControllerMapping_UnitAxis(double value) {
+	if (value >= 1.0) {
+		return 32767;
+	}
+	if (value <= -1.0) {
+		return -32768;
+	}
+	return (int16_t)lround(value < 0.0 ? value * 32768.0 : value * 32767.0);
+}
+
+void XwaControllerMapping_XrStickRadial(int16_t x, int16_t y, double deadzone, double exponent, int16_t out[2]) {
+	static const double k_outer = 0.95; /* the last 5 % of the throw is full */
+	const double fx = ControllerMapping_AxisUnit(x);
+	const double fy = ControllerMapping_AxisUnit(y);
+	const double r = sqrt(fx * fx + fy * fy);
+	const double major = fabs(fx) > fabs(fy) ? fabs(fx) : fabs(fy);
+	double t, m, scale;
+
+	if (deadzone < 0.0) {
+		deadzone = 0.0;
+	}
+	if (deadzone >= 0.9) {
+		out[0] = x;
+		out[1] = y;
+		return;
+	}
+	if (r <= deadzone || major <= 0.0) {
+		out[0] = out[1] = 0;
+		return;
+	}
+	t = (r - deadzone) / (k_outer - deadzone);
+	t = t > 1.0 ? 1.0 : t;
+	m = deadzone + (1.0 - deadzone) * (exponent > 1.0 ? pow(t, exponent) : t);
+	/* Round gate onto square gate: the axis pushed further gets m, the other
+	 * keeps the direction's ratio (a full diagonal is full on both). */
+	scale = m / major;
+	out[0] = ControllerMapping_UnitAxis(fx * scale);
+	out[1] = ControllerMapping_UnitAxis(fy * scale);
+}
+
 /* Response curve of the Touch thumbsticks in VR flight (XWA_XR_STICK_CURVE,
  * default 2.0 "Precise"; 1 = linear): small deflections turn gently for fine
  * aim, full deflection still gives the full turn rate. Pitch, yaw and roll
  * only (not the throttle), curved beyond the larger of the binding's dead
  * zone and the game's own (Joystick_PollRawAxes: a twentieth of the X/Y
  * range, a tenth of R's, i.e. 10 % / 20 % of the deflection), so the craft
- * answers as soon as the stick leaves it, just gently. The grabbed virtual
- * flight stick shares the right thumbstick's axes (whichever is pushed
- * further); an axis it drives stays linear. Mouse, desktop gamepads and
- * joysticks never come here (only the "openxr:touch" controller). */
+ * answers as soon as the stick leaves it, just gently.
+ *
+ * The steering thumbstick (the virtual gamepad's left stick) is handled as
+ * one stick (XwaControllerMapping_XrStickRadial): curving each axis on its
+ * own turned a round-gate diagonal (0.71 per axis) into half the rate per
+ * axis, and even linear a thumbstick never reaches the full diagonal of the
+ * game's square-gate joystick. Now a diagonal turns as fast in pitch and yaw
+ * as straight up or across.
+ *
+ * The grabbed virtual flight stick shares the right thumbstick's axes
+ * (whichever is pushed further); an axis it drives stays linear. Mouse,
+ * desktop gamepads and joysticks never come here (only the "openxr:touch"
+ * controller). */
+static int ControllerMapping_XrVirtualStickDrives(int source, int16_t value) {
+	float stick = 0.0f;
+
+	if (source == AERON_GAMEPAD_AXIS_LEFTX) {
+		stick = g_xrCurve.stick[0];
+	} else if (source == AERON_GAMEPAD_AXIS_LEFTY) {
+		stick = g_xrCurve.stick[1];
+	} else if (source == AERON_GAMEPAD_AXIS_RIGHTX) {
+		stick = g_xrCurve.stick[2];
+	}
+	return g_xrCurve.stick_held && stick != 0.0f && fabsf(stick) * 32767.0f + 64.0f >= (float)abs(value);
+}
+
 static void ControllerMapping_ApplyXrStickCurve(const AeronControllerSnapshot* controller,
 												XwaControllerLogicalState* state) {
 	static const int k_axes[] = { XWA_CONTROLLER_AXIS_YAW, XWA_CONTROLLER_AXIS_PITCH, XWA_CONTROLLER_AXIS_ROLL };
 	static const double k_game_deadzone[] = { 0.10, 0.10, 0.20 };
 	const XwaControllerProfile* profile;
 	double exponent;
+	double steer_deadzone = 0.0;
+	int16_t steer[2];
+	int steer_driven = 0;
 
 	if (!g_xrCurve.flight || !controller || controller->kind != AERON_CONTROLLER_KIND_GAMEPAD ||
 		strcmp(controller->path, "openxr:touch") != 0) {
 		return;
 	}
 	exponent = XwaControllerMapping_XrStickCurveExponent();
-	if (exponent <= 1.0) {
-		return;
-	}
 	profile = &g_controllerMapping.options.gamepad;
+	/* The steering stick's radial dead zone: the largest of its flight axes'. */
+	for (size_t i = 0; i < sizeof k_axes / sizeof k_axes[0]; ++i) {
+		const XwaControllerAxisBinding* binding = &profile->axes[k_axes[i]];
+		double deadzone;
+
+		if (binding->source != AERON_GAMEPAD_AXIS_LEFTX && binding->source != AERON_GAMEPAD_AXIS_LEFTY) {
+			continue;
+		}
+		deadzone = binding->deadzone > k_game_deadzone[i] ? (double)binding->deadzone : k_game_deadzone[i];
+		steer_deadzone = deadzone > steer_deadzone ? deadzone : steer_deadzone;
+		if (ControllerMapping_XrVirtualStickDrives(binding->source, state->source_axis_values[k_axes[i]])) {
+			steer_driven = 1;
+		}
+	}
+	XwaControllerMapping_XrStickRadial(controller->gamepad_axes[AERON_GAMEPAD_AXIS_LEFTX],
+									   controller->gamepad_axes[AERON_GAMEPAD_AXIS_LEFTY], steer_deadzone, exponent,
+									   steer);
 	for (size_t i = 0; i < sizeof k_axes / sizeof k_axes[0]; ++i) {
 		const XwaControllerAxisBinding* binding = &profile->axes[k_axes[i]];
 		const int16_t value = state->source_axis_values[k_axes[i]];
 		const double deadzone =
 			binding->deadzone > k_game_deadzone[i] ? (double)binding->deadzone : k_game_deadzone[i];
-		float stick = 0.0f;
+		int16_t curved;
 
-		if (binding->source < 0 || ControllerMapping_IsTrigger(controller, binding->source)) {
+		if (binding->source < 0 || ControllerMapping_IsTrigger(controller, binding->source) ||
+			ControllerMapping_XrVirtualStickDrives(binding->source, value)) {
 			continue;
 		}
-		if (binding->source == AERON_GAMEPAD_AXIS_LEFTX) {
-			stick = g_xrCurve.stick[0];
-		} else if (binding->source == AERON_GAMEPAD_AXIS_LEFTY) {
-			stick = g_xrCurve.stick[1];
-		} else if (binding->source == AERON_GAMEPAD_AXIS_RIGHTX) {
-			stick = g_xrCurve.stick[2];
+		if (!steer_driven && binding->source == AERON_GAMEPAD_AXIS_LEFTX) {
+			curved = steer[0];
+		} else if (!steer_driven && binding->source == AERON_GAMEPAD_AXIS_LEFTY) {
+			curved = steer[1];
+		} else if (exponent > 1.0) {
+			curved = XwaControllerMapping_XrStickCurve(value, deadzone, exponent);
+		} else {
+			continue;
 		}
-		if (g_xrCurve.stick_held && stick != 0.0f && fabsf(stick) * 32767.0f + 64.0f >= (float)abs(value)) {
-			continue; /* the virtual flight stick drives this axis */
-		}
-		state->axes[k_axes[i]] = ControllerMapping_CenteredAxis(
-			XwaControllerMapping_XrStickCurve(value, deadzone, exponent), binding->invert, binding->deadzone);
+		state->axes[k_axes[i]] = ControllerMapping_CenteredAxis(curved, binding->invert, binding->deadzone);
 	}
 }
 

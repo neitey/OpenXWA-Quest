@@ -558,7 +558,7 @@ static void android_load_settings(void) {
 				  "# Per-eye render resolution (lower = faster):\n"
 				  "#AERON_XR_RESOLUTION_SCALE=1.1\n"
 				  "# Per-eye pixel budget: caps the resolution above (low 2300000,\n"
-				  "# mid 3700000, high 4600000):\n"
+				  "# mid 3700000, high 6800000):\n"
 				  "#AERON_XR_EYE_PIXELS=3700000\n"
 				  "# Size cap of the three HUD images, as a fraction of the recommended eye\n"
 				  "# size (a higher eye resolution then costs no extra HUD work):\n"
@@ -570,6 +570,10 @@ static void android_load_settings(void) {
 				  "# The edges of the view are shaded in coarser blocks; HUD, panels and text\n"
 				  "# are not affected (restart to change):\n"
 				  "#XWA_XR_FOVEATION=low\n"
+				  "# Steam Frame: Valve's own foveation, which follows the eyes: off (ours\n"
+				  "# above does the fixed foveation), fixed (Valve's, without eye\n"
+				  "# tracking) or eye (Valve's, eye-tracked):\n"
+				  "#XWA_XR_FRAME_FOVEATION=off\n"
 				  "# GPU/CPU clock floor requested from the headset: 0, low, high, boost:\n"
 				  "#AERON_XR_PERF_LEVEL=high\n"
 				  "# 0 = turn off the GPU optimizations (A/B test; also in the VR options):\n"
@@ -681,6 +685,8 @@ static void android_load_settings(void) {
 				  "#XWA_XR_STICK_CURVE=2.0\n"
 				  "# 1 = right thumbstick back pushes the nose down (inverted pitch):\n"
 				  "#AERON_XR_INVERT_PITCH=0\n"
+				  "# 1 = the grabbed virtual flight stick pulled back pushes the nose down:\n"
+				  "#AERON_XR_INVERT_VSTICK_PITCH=0\n"
 				  "# 1 = left-handed controls: the controllers trade roles (sticks,\n"
 				  "# triggers, grips, A/B with X/Y); the flight stick stays on the right:\n"
 				  "#AERON_XR_LEFT_HANDED=0\n"
@@ -690,6 +696,10 @@ static void android_load_settings(void) {
 				  "# Voice commands: double-tap a thumb rest, then speak (doubletap), or\n"
 				  "# speak while the thumb is on the rest (hold); 0 = off:\n"
 				  "#XWA_XR_VOICE=doubletap\n"
+				  "# Controller buttons (VR Options > Remap Buttons): a function per\n"
+				  "# button, XWA_XR_BIND_<button>[_ALT]=<function> (no line = the default\n"
+				  "# layout); a grip set as Alt gives every other button a second function:\n"
+				  "#XWA_XR_GRIP_ALT=off\n"
 				  "# Helmet HUD distance in metres and size:\n"
 				  "#XWA_XR_HUD_DISTANCE=3.0\n"
 				  "#XWA_XR_HUD_SCALE=0.65\n"
@@ -697,6 +707,9 @@ static void android_load_settings(void) {
 				  "# model name in capitals (Y-wing and A-wing default to 0.9):\n"
 				  "#XWA_XR_COCKPIT_SCALE=1.0\n"
 				  "#XWA_XR_COCKPIT_SCALE_XWINGCOCKPIT=1.0\n"
+				  "# Seat position in every cockpit, metres further back from the window\n"
+				  "# (-0.2 closer .. 0.2 further; VR Options \"Seat Position\"):\n"
+				  "#XWA_XR_SEAT_POSITION=0\n"
 				  "# Screen distance in metres; the menu scene's viewer sits XWA_XR_ENV_BACK\n"
 				  "# metres behind its reference point:\n"
 				  "#AERON_XR_SCREEN_DISTANCE=3.2\n"
@@ -754,17 +767,58 @@ static void shim_frame(void) {
 	}
 }
 
+/* Steam Frame: the Android layer (Lepton) puts Valve's foveation layer
+ * (VK_LAYER_VALVE_fdm_injection, XR_APILAYER_VALVE_fdm_injection) into every
+ * app. It follows the eyes, and where the eye tracking restarts its sharp area
+ * jumps from frame to frame: the picture jitters. XWA_XR_FRAME_FOVEATION:
+ * off (default: the layer told to stay out; the game's own fixed foveation,
+ * XWA_XR_FOVEATION, does the job), fixed (Valve's without the eye tracking),
+ * eye (Valve's as it comes). The layer reads these variables in the game's
+ * process; they are set before anything loads Vulkan or OpenXR. Variables
+ * already set (from the Steam launch options) are kept. Elsewhere they mean
+ * nothing. */
+static void steam_frame_foveation(void) {
+	const char* mode = SDL_getenv("XWA_XR_FRAME_FOVEATION");
+	if (!mode || !mode[0]) {
+		mode = "off";
+	}
+	if (SDL_strcasecmp(mode, "eye") == 0) {
+		Aeron_LogInfo("xwa.config", "Steam Frame foveation: Valve's, eye-tracked");
+		return;
+	}
+	setenv("FDM_DEBUG", "disable_offsets", 0); /* no gaze-driven offsets */
+	if (SDL_strcasecmp(mode, "fixed") != 0) {
+		setenv("FDM", "0", 0);
+		setenv("DISABLE_VULKAN_FDM_INJECTION_LAYER", "1", 0);
+		setenv("DISABLE_XR_APILAYER_VALVE_FDM_INJECTION", "1", 0);
+		setenv("DISABLE_XR_APILAYER_VALVE_fdm_injection", "1", 0);
+	}
+	Aeron_LogInfo("xwa.config", "Steam Frame foveation: %s (FDM_DEBUG=%s, FDM=%s)",
+				  SDL_strcasecmp(mode, "fixed") == 0 ? "Valve's, fixed (no eye tracking)"
+													 : "Valve's off, the game's own fixed foveation",
+				  getenv("FDM_DEBUG") ? getenv("FDM_DEBUG") : "", getenv("FDM") ? getenv("FDM") : "");
+}
+
 /* Read before Aeron_Init: the XR swapchains are sized at session start. */
 static void android_xr_defaults(void) {
 	const char* profile = SDL_getenv("XWA_QUEST_PROFILE");
+	steam_frame_foveation();
 	if (profile && profile[0] == '0') {
 		return;
 	}
 	/* Per headset: eye pixel budget, refresh rate, foveation (before the
 	 * foveation shim is set up below). */
-	XwaXrTier_ApplyDefaults();
+	const XwaXrTier tier = XwaXrTier_ApplyDefaults();
 	if (!SDL_getenv("AERON_XR_RESOLUTION_SCALE")) {
 		SDL_setenv_unsafe("AERON_XR_RESOLUTION_SCALE", "1.1", 1);
+	}
+	if (s_android_fresh_settings && tier == XWA_XR_TIER_HIGH) {
+		/* Steam Frame: SteamVR recommends 1728 x 1728 per eye at its default
+		 * render scale while the panels are 2160 x 2160; a fresh install
+		 * starts at 120 % instead of the Quest's 110 %. */
+		SDL_setenv_unsafe("AERON_XR_RESOLUTION_SCALE", "1.2", 1);
+		XwaModernVrOptions_SaveValue("AERON_XR_RESOLUTION_SCALE", "1.2");
+		Aeron_LogInfo("xwa.config", "fresh install on a high-tier headset: resolution 120 %");
 	}
 	if (!SDL_getenv("AERON_XR_SCREEN_DISTANCE")) {
 		/* 1.1 m further than the 2.1 m it was; the menu scene's viewer sits
@@ -1234,7 +1288,16 @@ int main(int argc, char** argv) {
 #endif
 			/* Before the game reads input: the VR keyboard consumes its clicks. */
 			XwaVrKeyboard_BeginFrame(delta_us);
-			const int xr_unfocused = xr_auto_pause && Aeron_XrIsUnfocused();
+			/* Pauses after a second without focus: the Steam Frame drops
+			 * focus for about half a second now and then (its wear sensor),
+			 * which must not stop the game. Resumes at once. */
+			static int64_t xr_unfocused_us;
+			if (xr_auto_pause && Aeron_XrIsUnfocused()) {
+				xr_unfocused_us += delta_us > 0 ? delta_us : 0;
+			} else {
+				xr_unfocused_us = 0;
+			}
+			const int xr_unfocused = xr_unfocused_us >= 1000000;
 			if (xr_unfocused != xr_paused) {
 				xr_paused = xr_unfocused;
 				Aeron_AudioSetPaused(paused || xr_paused);

@@ -41,6 +41,11 @@ typedef struct XwaMovieTaskState {
 	int result;
 	int no_fade;
 	int playback_paused;
+	/* Stuck-film watchdog: the position last seen moving and when. */
+	int64_t watch_position_us;
+	uint64_t watch_last_us;
+	uint64_t watch_stuck_us;
+	int watch_kicks;
 } XwaMovieTaskState;
 
 static XwaMovieTaskState g_xwaMovieTask;
@@ -185,6 +190,10 @@ int XwaMovieTask_Begin(const char* name, int noFade) {
 	g_xwaMovieTask.complete = 0;
 	g_xwaMovieTask.result = 0;
 	g_xwaMovieTask.playback_paused = 0;
+	g_xwaMovieTask.watch_position_us = -1;
+	g_xwaMovieTask.watch_last_us = 0;
+	g_xwaMovieTask.watch_stuck_us = 0;
+	g_xwaMovieTask.watch_kicks = 0;
 	if (!XwaMovieTask_ResolveAsset(name, g_xwaMovieTask.path, sizeof(g_xwaMovieTask.path),
 								   g_xwaMovieTask.original_path, sizeof(g_xwaMovieTask.original_path),
 								   g_xwaMovieTask.subtitle_path, sizeof(g_xwaMovieTask.subtitle_path))) {
@@ -348,6 +357,47 @@ static int XwaMovieTask_SubmitCurrent(void) {
 	return 1;
 }
 
+/* A film whose position stops moving while it should play (buffering or
+ * playing, headset focused, game not paused) for XWA_MOVIE_STUCK_US of
+ * running ticks gets a pause and play, the same reset a Meta button round
+ * trip gives it. Ticks are counted at most 100 ms each, so one long stall
+ * of the main thread (loading) is not mistaken for a stuck film. */
+#define XWA_MOVIE_STUCK_US 1500000u
+
+static void XwaMovieTask_Watchdog(void) {
+	const uint64_t now = Aeron_NowUs();
+	const AeronVideoState state = Aeron_VideoGetState(g_xwaMovieTask.player);
+	const int64_t position = Aeron_VideoGetPositionUs(g_xwaMovieTask.player);
+	uint64_t step;
+
+	step = g_xwaMovieTask.watch_last_us != 0 && now > g_xwaMovieTask.watch_last_us
+			   ? now - g_xwaMovieTask.watch_last_us
+			   : 0;
+	if (step > 100000u) {
+		step = 100000u;
+	}
+	g_xwaMovieTask.watch_last_us = now;
+	if (g_xwaMovieTask.playback_paused || (state != AERON_VIDEO_BUFFERING && state != AERON_VIDEO_PLAYING) ||
+		position != g_xwaMovieTask.watch_position_us) {
+		g_xwaMovieTask.watch_position_us = position;
+		g_xwaMovieTask.watch_stuck_us = 0;
+		return;
+	}
+	g_xwaMovieTask.watch_stuck_us += step;
+	if (g_xwaMovieTask.watch_stuck_us < XWA_MOVIE_STUCK_US) {
+		return;
+	}
+	g_xwaMovieTask.watch_stuck_us = 0;
+	++g_xwaMovieTask.watch_kicks;
+	if (g_xwaMovieTask.watch_kicks <= 5) {
+		Aeron_LogWarn("xwa.movie", "film '%s' stuck at %lld us (%s, frame %d): restarting playback",
+					  g_xwaMovieTask.name, (long long)position,
+					  state == AERON_VIDEO_BUFFERING ? "buffering" : "playing", g_movieFrameNumber);
+	}
+	Aeron_VideoPause(g_xwaMovieTask.player);
+	Aeron_VideoPlay(g_xwaMovieTask.player);
+}
+
 void XwaMovieTask_Tick(void) {
 	const AeronInputSnapshot* input;
 	AeronVideoState state;
@@ -370,6 +420,7 @@ void XwaMovieTask_Tick(void) {
 
 	Aeron_VideoUpdate(g_xwaMovieTask.player);
 	g_movieFrameNumber = (int)Aeron_VideoGetPresentedFrameIndex(g_xwaMovieTask.player);
+	XwaMovieTask_Watchdog();
 
 	if (FrontendDialog_HasNetworkDismissPacket() || XwaMovieTask_LocalSkipRequested()) {
 		XwaMovieTask_Stop(1);

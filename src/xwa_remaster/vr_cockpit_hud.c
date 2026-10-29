@@ -113,28 +113,30 @@ static const struct {
 	/* TIEs: the pods on the hull wall beside the viewport, the targeting
 	 * computer on the console's centre (above the yoke, which would hide
 	 * its lower edge), the MFDs on the console's side screens; the
-	 * flight-group line above the readout row, in the viewport. */
+	 * flight-group line above the readout row, in the viewport. Seen from
+	 * the TIE seat 30 cm forward of the model's eye point (flight.c,
+	 * k_xr_seat_shift): the same spots on the cockpit, nearer the eye. */
 	{ "REVIVALTIEFIGHTER",
-	  { { CK_LEFT_POD, -40.0f, 2.0f, 0.78f },
-		{ CK_RIGHT_POD, 40.0f, 2.0f, 0.78f },
-		{ CK_MESSAGES_LOW, 0.0f, -11.0f, 0.95f },
-		{ CK_CMD, 0.0f, -22.0f, 0.63f },
-		{ CK_MFD_LEFT, -21.0f, -23.0f, 0.64f },
-		{ CK_MFD_RIGHT, 21.0f, -23.0f, 0.64f } } },
+	  { { CK_LEFT_POD, -59.3f, 2.7f, 0.58f },
+		{ CK_RIGHT_POD, 59.3f, 2.7f, 0.58f },
+		{ CK_MESSAGES_LOW, 0.0f, -16.0f, 0.66f },
+		{ CK_CMD, 0.0f, -39.7f, 0.37f },
+		{ CK_MFD_LEFT, -40.2f, -37.4f, 0.41f },
+		{ CK_MFD_RIGHT, 40.2f, -37.4f, 0.41f } } },
 	{ "REVIVALTIEINTERCEPTOR",
-	  { { CK_LEFT_POD, -40.0f, 2.0f, 0.78f },
-		{ CK_RIGHT_POD, 40.0f, 2.0f, 0.78f },
-		{ CK_MESSAGES_LOW, 0.0f, -11.0f, 0.95f },
-		{ CK_CMD, 0.0f, -22.0f, 0.63f },
-		{ CK_MFD_LEFT, -21.0f, -23.0f, 0.64f },
-		{ CK_MFD_RIGHT, 21.0f, -23.0f, 0.64f } } },
+	  { { CK_LEFT_POD, -59.3f, 2.7f, 0.58f },
+		{ CK_RIGHT_POD, 59.3f, 2.7f, 0.58f },
+		{ CK_MESSAGES_LOW, 0.0f, -16.0f, 0.66f },
+		{ CK_CMD, 0.0f, -39.7f, 0.37f },
+		{ CK_MFD_LEFT, -40.2f, -37.4f, 0.41f },
+		{ CK_MFD_RIGHT, 40.2f, -37.4f, 0.41f } } },
 	{ "REVIVALTIEBOMBER",
-	  { { CK_LEFT_POD, -40.0f, 2.0f, 0.85f },
-		{ CK_RIGHT_POD, 40.0f, 2.0f, 0.85f },
-		{ CK_MESSAGES_LOW, 0.0f, -12.0f, 0.95f },
-		{ CK_CMD, 0.0f, -24.0f, 0.59f },
-		{ CK_MFD_LEFT, -21.0f, -23.0f, 0.60f },
-		{ CK_MFD_RIGHT, 21.0f, -23.0f, 0.60f } } },
+	  { { CK_LEFT_POD, -57.3f, 2.6f, 0.65f },
+		{ CK_RIGHT_POD, 57.3f, 2.6f, 0.65f },
+		{ CK_MESSAGES_LOW, 0.0f, -17.4f, 0.66f },
+		{ CK_CMD, 0.0f, -45.1f, 0.34f },
+		{ CK_MFD_LEFT, -42.6f, -38.7f, 0.38f },
+		{ CK_MFD_RIGHT, 42.6f, -38.7f, 0.38f } } },
 	/* YT-1300: the console slopes away from 0.7 to 1.1 m. */
 	{ "REVIVALFALCON",
 	  { { CK_LEFT_POD, -40.0f, 2.0f, 0.71f },
@@ -241,6 +243,12 @@ static void ck_union(float acc[4], int* valid, const float b[4]) {
 	acc[3] = fmaxf(acc[3], b[3]);
 }
 
+float XwaVrCockpitHud_SeatBack(void) {
+	const char* env = getenv("XWA_XR_SEAT_POSITION");
+	const float back = env && env[0] ? (float)atof(env) : 0.0f;
+	return back < -0.2f ? -0.2f : back > 0.2f ? 0.2f : back;
+}
+
 static void ck_pose(const CkSpec* spec, float world_scale, AeronXrPanel* out) {
 	const float deg = 3.14159265f / 180.0f;
 	const float yaw = spec->yaw * deg, pitch = spec->pitch * deg;
@@ -249,7 +257,7 @@ static void ck_pose(const CkSpec* spec, float world_scale, AeronXrPanel* out) {
 	const float dir[3] = { sinf(yaw) * cosf(pitch), sinf(pitch), -cosf(yaw) * cosf(pitch) };
 	out->position[0] = dir[0] * d;
 	out->position[1] = dir[1] * d;
-	out->position[2] = dir[2] * d;
+	out->position[2] = dir[2] * d - XwaVrCockpitHud_SeatBack(); /* -Z forward */
 	/* The quad's +Z faces the eye point; its X stays level. */
 	const float z[3] = { -dir[0], -dir[1], -dir[2] };
 	float x[3] = { z[2], 0.0f, -z[0] }; /* (0,1,0) x z */
@@ -525,6 +533,7 @@ int XwaVrCockpitHud_TakeLayout(char* key, int key_size, char* value, int value_s
 
 static void ck_apply_custom(AeronXrPanel* panel, int p) {
 	memcpy(panel->position, s_ck.cpos[p], sizeof panel->position);
+	panel->position[2] -= XwaVrCockpitHud_SeatBack(); /* stored as at seat position 0 */
 	memcpy(panel->orientation, s_ck.cq[p], sizeof panel->orientation);
 }
 
@@ -584,6 +593,7 @@ static void ck_update_grab(AeronXrPanel* out, const int* index_of) {
 				for (int k = 0; k < 3; ++k) {
 					s_ck.cpos[held][k] = xh.position[k] + off[k];
 				}
+				s_ck.cpos[held][2] += XwaVrCockpitHud_SeatBack();
 				ck_qmul(xh.orientation, s_ck.grab_q[hand], s_ck.cq[held]);
 				ck_qnorm(s_ck.cq[held]);
 				s_ck.custom[held] = 1;
@@ -598,6 +608,7 @@ static void ck_update_grab(AeronXrPanel* out, const int* index_of) {
 			ck_qmul(inv, panel->orientation, s_ck.grab_q[hand]);
 			ck_qnorm(s_ck.grab_q[hand]);
 			memcpy(s_ck.cpos[p], panel->position, sizeof s_ck.cpos[p]);
+			s_ck.cpos[p][2] += XwaVrCockpitHud_SeatBack();
 			memcpy(s_ck.cq[p], panel->orientation, sizeof s_ck.cq[p]);
 			s_ck.custom[p] = 1;
 			s_ck.grab_panel[hand] = p;
