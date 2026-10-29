@@ -24,9 +24,9 @@
 # and --voice-model (encoder.onnx, decoder.onnx, joiner.onnx, tokens.txt).
 # Missing ones are reported; the game runs without them (no logo card etc.).
 #
-# The optional X-Wing Revival cockpits (VR Options -> Cockpit Model; by
-# Raptor007, bundled with his permission, see THIRD-PARTY-NOTICES 24) are
-# not in the repository either: --revival-cockpits DIR holds the Revival
+# The X-Wing Revival cockpits (VR Options -> Cockpit Model, shown only when
+# they are there) are not in the releases, nor in the repository:
+# --revival-cockpits DIR adds them; DIR holds the Revival
 # files staged by packaging/quest/tools/gen_revival_cockpits.py stage (DIR/data)
 # and a host aeron_gltf_cook (DIR/tools/aeron_gltf_cook, or PCVR_REVIVAL_COOK);
 # they are converted into the package's revival_cockpits folder next to
@@ -43,7 +43,7 @@ VR_ASSETS=${PCVR_VR_ASSETS:-$SP_DEFAULT/vrassets}
 VOICE_MODEL=${PCVR_VOICE_MODEL:-$SP_DEFAULT/vrassets/voice}
 REVIVAL=${PCVR_REVIVAL_COCKPITS:-$SP_DEFAULT/vrassets/revival}
 WITH_VOICE=1
-WITH_REVIVAL=1
+WITH_REVIVAL=0 # the releases leave them out; --revival-cockpits DIR adds them
 FROM_WORKTREE=0
 DEPS_ONLY=0
 JOBS=$(nproc)
@@ -56,7 +56,7 @@ while [ $# -gt 0 ]; do
 		--vr-assets) VR_ASSETS=$2; shift 2 ;;
 		--voice-model) VOICE_MODEL=$2; shift 2 ;;
 		--no-voice) WITH_VOICE=0; shift ;;
-		--revival-cockpits) REVIVAL=$2; shift 2 ;;
+		--revival-cockpits) REVIVAL=$2; WITH_REVIVAL=1; shift 2 ;;
 		--no-revival-cockpits) WITH_REVIVAL=0; shift ;;
 		--worktree) FROM_WORKTREE=1; shift ;;
 		--deps-only) DEPS_ONLY=1; shift ;;

@@ -487,10 +487,6 @@ static int pc_load_settings(int xr_requested) {
 		  "#XWA_XR_STICK_CURVE=2.0\n"
 		  "# 0 = keep the game running while the headset is off / the dashboard is open:\n"
 		  "#XWA_XR_AUTO_PAUSE=1\n"
-		  "# Cockpit model: xwa (X-Wing Alliance's own) or revival (the optional\n"
-		  "# X-Wing Revival cockpits in the revival_cockpits folder next to\n"
-		  "# OpenXWA.exe, for the crafts that have one):\n"
-		  "#XWA_XR_COCKPIT_MODEL=xwa\n"
 		  "# GPU API: direct3d12 (the default) or vulkan, e.g. if a runtime has trouble\n"
 		  "# with one of them:\n"
 		  "#SDL_GPU_DRIVER=vulkan\n",

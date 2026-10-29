@@ -16,11 +16,5 @@ Windows x86-64, plus:
    the official prebuilt Windows x64 release (static CRT) - Apache License
    2.0 / MIT, see above
 
-3D cockpits from X-Wing Revival (https://www.raptor007.com/x-wing-revival/)
-by Raptor007 (Blair Sherman), included with his permission; the models are
-originally by the X-Wing Alliance Upgrade team (https://xwaupgrade.com/).
-They are optional and off by default (VR Options -> Cockpit Model; 24
-above) and are in the revival_cockpits folder next to OpenXWA.exe.
-
 Licence texts of the libraries shipped as DLLs are also in the licenses
 folder.
