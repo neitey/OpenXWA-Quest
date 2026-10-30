@@ -2,7 +2,7 @@
 
 *Star Wars: X-Wing Alliance* in virtual reality, standalone on Meta Quest 3 /
 3S and Steam Frame: no PC needed while you play. Pico is supported but
-experimental.
+experimental. Latest builds also include PCVR Zip!
 
 Neitey's XW: Alliance VR is based on
 [OpenXWA](https://github.com/elyosh/OpenXWA), the open-source
