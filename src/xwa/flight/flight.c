@@ -7621,6 +7621,24 @@ static __inline int FlightAction_WarheadMessageBase(uint16_t warheadTypeId, unsi
 	}
 }
 
+#ifdef XWA_MODERN
+/* OpenXWA: "target incoming" picks only real warheads (what a launcher fires:
+ * g_warheadTypeIds - missiles, torpedoes, rockets, bombs, mag / ion pulse),
+ * not the guided laser / ion bolts capital ships fire (WarheadLaser1..3,
+ * WarheadIon), and only ones homing on this player - the original also fell
+ * back to warheads aimed at friendly craft. */
+static __inline int FlightAction_IsLauncherWarhead(uint16_t objectType) {
+	size_t i;
+
+	for (i = 1; i < sizeof g_warheadTypeIds / sizeof g_warheadTypeIds[0]; ++i) {
+		if (g_warheadTypeIds[i] == objectType) {
+			return 1;
+		}
+	}
+	return 0;
+}
+#endif
+
 static __inline uint16_t FlightAction_FindIncomingWarheadTarget(unsigned int playerIdx) {
 	uint32_t objIdx;
 	uint32_t bestDistance = UINT32_MAX;
@@ -7635,6 +7653,11 @@ static __inline uint16_t FlightAction_FindIncomingWarheadTarget(unsigned int pla
 			obj->mobj->pWarheadGuidance == NULL) {
 			continue;
 		}
+#ifdef XWA_MODERN
+		if (!FlightAction_IsLauncherWarhead(obj->objectType)) {
+			continue;
+		}
+#endif
 
 		if (obj->mobj->pWarheadGuidance->targetObjIdx == (uint16_t)g_players[playerIdx].objectIndex) {
 			pai_ObjectRefDirectionToObjectRef((unsigned int)g_players[playerIdx].objectIndex, objIdx);
@@ -7648,6 +7671,9 @@ static __inline uint16_t FlightAction_FindIncomingWarheadTarget(unsigned int pla
 	if (bestObjIdx != 0xffffu) {
 		return bestObjIdx;
 	}
+#ifdef XWA_MODERN
+	return 0xffffu;
+#endif
 
 	for (objIdx = g_projectileObjectSlotStart; objIdx < g_projectileObjectSlotEnd; ++objIdx) {
 		uint16_t targetObjIdx;
