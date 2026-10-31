@@ -57,6 +57,7 @@ Immersive 3D Menu Environments.
 
 ## Install
 
+Standalone:
 You need a headset in Developer Mode (Meta Horizon phone app -> Devices ->
 your headset -> Headset settings -> Developer Mode) and a USB-C cable that
 carries data.
@@ -85,6 +86,9 @@ the headset over Wi-Fi (SSH, with the Developer Mode password; needs Windows'
 OpenSSH Client) and adds it to the Steam Library, where it stays like any
 other game: no "Lepton Development" needed, nothing is deleted when it closes.
 The older "Lepton Development" way (USB or Wi-Fi) still works too.
+
+PCVR:
+Download the Zip and decompress. Copy the files into your X-Wing Alliance Steam or GOG installaion. Allow to overwrite when asked. Start the X-Wing Allicance VR BAT file.
 
 ## Controls
 
