@@ -8,7 +8,8 @@
  * without help the headset shows every world state for two or three display
  * frames. The capture keeps the previous step's pose per object slot and,
  * every host frame, rewrites the snapshot's poses to a smoothed presentation
- * time between the last two steps (about half a step of visual lag). The
+ * time among the last few steps: behind the newest by just enough to ride
+ * out the gaps between step arrivals seen lately (network waits). The
  * simulation, the lockstep and the network are untouched: this only edits the
  * captured snapshot after the classic frame has run.
  *
@@ -28,9 +29,20 @@ extern "C" {
 int XwaSnapshotPresent_Mode(void);
 
 /* Rewrites s's flight poses for this host frame. game_time is the sim clock
- * the snapshot shows (g_gameTime); enabled = 0 shows the newest step as is
- * and forgets the history. */
-void XwaSnapshotPresent_Apply(XwaSnapshot* s, int32_t game_time, int enabled);
+ * the snapshot shows (g_gameTime), host_us the host clock; enabled = 0 shows
+ * the newest step as is and forgets the history. */
+void XwaSnapshotPresent_Apply(XwaSnapshot* s, int32_t game_time, uint64_t host_us, int enabled);
+
+typedef struct XwaSnapshotPresentStats {
+	uint32_t frames;
+	uint32_t steps;
+	uint32_t held_frames;  /* the shown time caught up with the newest step */
+	double lag_ticks_sum;  /* shown time behind the newest step, summed */
+	double max_gap_ticks;  /* longest wait between two steps, in sim ticks */
+} XwaSnapshotPresentStats;
+
+/* The counters since the last call (for the multiplayer timing log). */
+void XwaSnapshotPresent_TakeStats(XwaSnapshotPresentStats* out);
 
 void XwaSnapshotPresent_Reset(void);
 

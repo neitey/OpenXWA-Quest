@@ -12,6 +12,7 @@
 #include "xwa_runtime/snapshot/snapshot_flight_map.h"
 #include "xwa_runtime/snapshot/snapshot_hud.h"
 #include "xwa_runtime/snapshot/snapshot_present.h"
+#include "xwa_runtime/timing/host_clock.h"
 #include "xwa_runtime/timing/modern_flight_timing.h"
 
 #include "aeron/aeron.h"
@@ -1587,7 +1588,7 @@ void XwaSnapshot_CaptureFlight(void) {
 		const int enabled = mode != 0 && (mode == 1 || XwaModernFlightTiming_StepTicks() > 1) &&
 							!g_filmPlaybackMode &&
 							g_players[g_localPlayer].hyperspacePhase == PLAYER_HYPERSPACE_PHASE_NONE;
-		XwaSnapshotPresent_Apply(s, g_gameTime, enabled);
+		XwaSnapshotPresent_Apply(s, g_gameTime, XwaTime_GetElapsedUs(), enabled);
 	}
 }
 

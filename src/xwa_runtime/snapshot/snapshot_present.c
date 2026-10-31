@@ -5,59 +5,77 @@
 #include <string.h>
 
 /* ---- tuning ------------------------------------------------------------
- * A larger one-step move is a cut (respawn, hyperspace, slot reuse), and so
- * is a larger one-step turn: those show the newest pose. */
+ * A larger move between two steps is a cut (respawn, hyperspace, slot
+ * reuse), and so is a larger turn: those show the newer pose. */
 #define PRESENT_TELEPORT_UNITS 0x40000
 #define PRESENT_MIN_AXIS_DOT 0.9f
 #define PRESENT_MAX_ANGLE_DELTA 0x2000 /* Q16: 45 degrees */
 #define PRESENT_GAIN 0.05
+#define PRESENT_NOMINAL_TICKS_PER_US (1.0 / 4000.0) /* the sim clock: 4 ms ticks */
+#define PRESENT_MIN_LAG 2.0
+#define PRESENT_MAX_LAG 48.0 /* ticks: at most ~190 ms behind the newest step */
 enum {
-	PRESENT_IDLE_FRAMES = 8, /* host frames without a step: a pause */
+	PRESENT_HISTORY = 8, /* steps kept per object: the shown time may lag several */
+	PRESENT_ARRIVALS = 32,
 	PRESENT_SLOT_GROW = 256,
+	PRESENT_PAUSE_US = 500000, /* no step for this long: hold the newest */
 };
 
-typedef struct PresentSlot {
-	uint32_t serial; /* step the "curr" pose belongs to */
+typedef struct PresentPose {
+	uint32_t serial; /* step this pose belongs to; 0 = empty */
 	uint16_t signature;
-	uint8_t valid;
+	int16_t spin;
+	int32_t pos[3];
+	int16_t rows[9];
+	uint16_t ang[4];
+	int32_t prev_pos[3]; /* MobileObject.prevWorld* (spawn: where it moved from) */
+} PresentPose;
+
+typedef struct PresentSlot {
+	PresentPose hist[PRESENT_HISTORY];
 	/* This frame's shown pose, for things attached to the object. */
+	uint32_t serial; /* frame data below is for this step */
+	uint16_t signature;
 	uint8_t moved;	 /* shown differs from the newest pose */
 	uint8_t rotated; /* ... including its orientation */
-	int32_t prev_pos[3], curr_pos[3];
-	int16_t prev_rows[9], curr_rows[9];
-	uint16_t prev_ang[4], curr_ang[4];
-	int16_t prev_spin, curr_spin;
-	int32_t shown_pos[3];
+	int32_t curr_pos[3], shown_pos[3];
 	float curr_axes[9], shown_axes[9];
 } PresentSlot;
 
-typedef struct PresentCamera {
+typedef struct PresentCameraPose {
 	uint32_t serial;
-	uint8_t valid;
 	uint8_t region, external, map_mode, in_hangar;
 	int32_t focus;
-	int32_t prev_pos[3], curr_pos[3];
-	float prev_rows[9], curr_rows[9];
-} PresentCamera;
+	int32_t pos[3];
+	float rows[9];
+} PresentCameraPose;
 
 static PresentSlot* s_slots;
 static uint32_t s_slot_cap;
-static PresentCamera s_cam;
-static uint32_t s_serial;
-static int s_have_step, s_have_prev_step;
-static int32_t s_step_time, s_prev_step_time;
+static PresentCameraPose s_cam[PRESENT_HISTORY];
+static uint32_t s_serial; /* the newest step; serials start at 1 */
+static int32_t s_step_time[PRESENT_HISTORY];
+static uint32_t s_steps_kept; /* steps since the last reset, up to PRESENT_HISTORY */
+static int s_have_step;
 
-/* Presentation clock, in sim ticks: advances by the average sim time per
- * host frame and is pulled gently toward half a step behind the newest step,
- * so the shown time moves evenly although the steps arrive every 2-3 frames. */
+/* ---- presentation clock ----------------------------------------------------
+ * In sim ticks, advanced by host time at the measured sim speed, and pulled
+ * gently toward a lag behind the newest step that covers the gaps between
+ * step arrivals seen lately. Multiplayer steps arrive unevenly: every
+ * frame or two, then a stall while a peer's input or the host's world
+ * message is on its way; the lag keeps the shown time moving through them. */
 static struct {
 	int valid;
 	double present;
-	double rate; /* sim ticks per host frame (EMA) */
-	double step; /* sim ticks per step (EMA) */
-	int32_t last_time;
-	uint32_t idle;
+	double lag;		 /* ticks behind the newest step aimed for */
+	double gap_peak; /* recent largest sim time between two step arrivals */
+	uint64_t last_us;
+	uint64_t arrival_us[PRESENT_ARRIVALS];
+	int32_t arrival_time[PRESENT_ARRIVALS];
+	uint32_t arrivals;
 } s_clock;
+
+static XwaSnapshotPresentStats s_stats;
 
 int XwaSnapshotPresent_Mode(void) {
 	static int mode = -2;
@@ -70,12 +88,21 @@ int XwaSnapshotPresent_Mode(void) {
 
 void XwaSnapshotPresent_Reset(void) {
 	s_have_step = 0;
-	s_have_prev_step = 0;
+	s_steps_kept = 0;
 	s_clock.valid = 0;
-	s_cam.valid = 0;
+	s_clock.arrivals = 0;
+	s_clock.gap_peak = 0.0;
+	memset(s_cam, 0, sizeof s_cam);
 	if (s_slots) {
 		memset(s_slots, 0, sizeof *s_slots * s_slot_cap);
 	}
+}
+
+void XwaSnapshotPresent_TakeStats(XwaSnapshotPresentStats* out) {
+	if (out) {
+		*out = s_stats;
+	}
+	memset(&s_stats, 0, sizeof s_stats);
 }
 
 static PresentSlot* present_slot(uint32_t slot) {
@@ -92,51 +119,78 @@ static PresentSlot* present_slot(uint32_t slot) {
 	return &s_slots[slot];
 }
 
-static float present_alpha(void) {
-	if (!s_have_prev_step || s_step_time <= s_prev_step_time) {
-		s_clock.valid = 0;
-		return 1.0f;
+static int32_t step_time(uint32_t serial) { return s_step_time[serial % PRESENT_HISTORY]; }
+
+/* Sim ticks per host microsecond over the recent arrivals. */
+static double clock_speed(void) {
+	const uint32_t n = s_clock.arrivals < PRESENT_ARRIVALS ? s_clock.arrivals : PRESENT_ARRIVALS;
+	if (n >= 2) {
+		const uint32_t newest = (s_clock.arrivals - 1) % PRESENT_ARRIVALS;
+		const uint32_t oldest = (s_clock.arrivals - n) % PRESENT_ARRIVALS;
+		const double us = (double)(s_clock.arrival_us[newest] - s_clock.arrival_us[oldest]);
+		const double ticks = (double)(s_clock.arrival_time[newest] - s_clock.arrival_time[oldest]);
+		if (us >= 250000.0 && ticks > 0.0) {
+			const double speed = ticks / us;
+			/* sane: the sim clock runs 0.25x .. 2x */
+			if (speed > PRESENT_NOMINAL_TICKS_PER_US * 0.25 && speed < PRESENT_NOMINAL_TICKS_PER_US * 2.0) {
+				return speed;
+			}
+		}
 	}
-	const double span = (double)(s_step_time - s_prev_step_time);
-	const int32_t t = s_step_time;
+	return PRESENT_NOMINAL_TICKS_PER_US;
+}
+
+/* Advances the clock for this host frame; returns the shown sim time. */
+static double clock_advance(int new_step, uint64_t host_us) {
+	const double newest = (double)step_time(s_serial);
+	uint64_t dt_us = s_clock.valid && host_us > s_clock.last_us ? host_us - s_clock.last_us : 0;
+	if (dt_us > 100000) {
+		dt_us = 100000;
+	}
+	s_clock.last_us = host_us;
+	if (new_step) {
+		const uint32_t i = s_clock.arrivals % PRESENT_ARRIVALS;
+		const uint64_t prev_us = s_clock.arrivals ? s_clock.arrival_us[(s_clock.arrivals - 1) % PRESENT_ARRIVALS] : 0;
+		s_clock.arrival_us[i] = host_us;
+		s_clock.arrival_time[i] = step_time(s_serial);
+		s_clock.arrivals++;
+		if (s_clock.arrivals >= 2 && host_us > prev_us) {
+			/* the sim time the screen uses up before the next step can arrive */
+			const double gap = (double)(host_us - prev_us) * clock_speed();
+			s_clock.gap_peak = gap > s_clock.gap_peak ? gap : s_clock.gap_peak * 0.97 + gap * 0.03;
+			if (gap > s_stats.max_gap_ticks) {
+				s_stats.max_gap_ticks = gap;
+			}
+		}
+	}
+	double lag = s_clock.gap_peak * 1.15 + 1.0;
+	lag = lag < PRESENT_MIN_LAG ? PRESENT_MIN_LAG : lag > PRESENT_MAX_LAG ? PRESENT_MAX_LAG : lag;
+	s_clock.lag = lag;
+
+	const double target = newest - lag;
 	if (!s_clock.valid) {
 		s_clock.valid = 1;
-		s_clock.step = span;
-		s_clock.rate = span * 0.4; /* about 2.5 host frames per step */
-		s_clock.last_time = t;
-		s_clock.idle = 0;
-		s_clock.present = (double)t - 0.5 * span;
+		s_clock.present = target;
+	} else if (s_clock.arrivals &&
+			   host_us - s_clock.arrival_us[(s_clock.arrivals - 1) % PRESENT_ARRIVALS] > PRESENT_PAUSE_US) {
+		s_clock.present = newest; /* paused: hold, resume from the newest step */
 	} else {
-		const double advance = (double)(t - s_clock.last_time);
-		s_clock.last_time = t;
-		if (advance > 0.0) {
-			s_clock.step += (advance - s_clock.step) / 16.0;
-			s_clock.idle = 0;
-		} else if (++s_clock.idle >= PRESENT_IDLE_FRAMES) {
-			/* paused: hold, and resume from the newest step */
-			s_clock.present = (double)t;
-		}
-		s_clock.rate += (advance - s_clock.rate) / 16.0;
-		if (s_clock.rate > s_clock.step) {
-			s_clock.rate = s_clock.step;
-		}
-		const double target = (double)t - 0.5 * s_clock.step;
-		const double snap = s_clock.step * 4.0 > 16.0 ? s_clock.step * 4.0 : 16.0;
-		s_clock.present += s_clock.rate;
+		s_clock.present += (double)dt_us * clock_speed();
 		const double error = target - s_clock.present;
+		const double snap = lag * 2.0 > 30.0 ? lag * 2.0 : 30.0;
 		if (error > snap || error < -snap) {
 			s_clock.present = target;
 		} else {
 			s_clock.present += error * PRESENT_GAIN;
 		}
 	}
-	double alpha = (s_clock.present - (double)s_prev_step_time) / span;
-	if (alpha < 0.0) {
-		alpha = 0.0;
-	} else if (alpha > 1.0) {
-		alpha = 1.0;
+	if (s_clock.present >= newest) {
+		s_clock.present = newest;
+		s_stats.held_frames++; /* caught up with the newest step: motion stops */
 	}
-	return (float)alpha;
+	s_stats.frames++;
+	s_stats.lag_ticks_sum += newest - s_clock.present;
+	return s_clock.present;
 }
 
 /* ---- small vector helpers --------------------------------------------- */
@@ -178,15 +232,15 @@ static int orthonormalize(float m[9]) {
 	return 1;
 }
 
-/* prev -> curr at alpha; 0 when the turn is too large to be motion. */
-static int blend_basis(const float prev[9], const float curr[9], float alpha, float out[9]) {
+/* a -> b at alpha; 0 when the turn is too large to be motion. */
+static int blend_basis(const float a[9], const float b[9], float alpha, float out[9]) {
 	for (int r = 0; r < 3; ++r) {
-		if (dot3(prev + r * 3, curr + r * 3) < PRESENT_MIN_AXIS_DOT) {
+		if (dot3(a + r * 3, b + r * 3) < PRESENT_MIN_AXIS_DOT) {
 			return 0;
 		}
 	}
 	for (int k = 0; k < 9; ++k) {
-		out[k] = prev[k] + (curr[k] - prev[k]) * alpha;
+		out[k] = a[k] + (b[k] - a[k]) * alpha;
 	}
 	return orthonormalize(out);
 }
@@ -207,18 +261,27 @@ static int16_t axis_to_q15(float v) {
 	return (int16_t)q;
 }
 
-static int blend_pos(const int32_t prev[3], const int32_t curr[3], float alpha, int32_t out[3]) {
+static int blend_pos(const int32_t a[3], const int32_t b[3], float alpha, int32_t out[3]) {
 	for (int k = 0; k < 3; ++k) {
-		if (llabs((long long)curr[k] - prev[k]) > PRESENT_TELEPORT_UNITS) {
-			memcpy(out, curr, sizeof(int32_t) * 3);
+		if (llabs((long long)b[k] - a[k]) > PRESENT_TELEPORT_UNITS) {
 			return 0;
 		}
 	}
 	for (int k = 0; k < 3; ++k) {
-		const double delta = (double)curr[k] - (double)prev[k];
-		out[k] = (int32_t)((long long)prev[k] + llround(delta * alpha));
+		const double delta = (double)b[k] - (double)a[k];
+		out[k] = (int32_t)((long long)a[k] + llround(delta * alpha));
 	}
 	return 1;
+}
+
+static void blend_angle(uint16_t a, uint16_t b, float alpha, uint16_t* out) {
+	const int16_t d = (int16_t)(uint16_t)(b - a);
+	*out = (uint16_t)(a + (int)lrintf((float)d * alpha));
+}
+
+static int angles_close(uint16_t a, uint16_t b) {
+	const int16_t d = (int16_t)(uint16_t)(b - a);
+	return d <= PRESENT_MAX_ANGLE_DELTA && d >= -PRESENT_MAX_ANGLE_DELTA;
 }
 
 /* A world vector of the owner's newest pose, in its shown pose. */
@@ -260,141 +323,157 @@ static const PresentSlot* moved_owner(uint32_t slot, uint16_t signature) {
 		return NULL;
 	}
 	const PresentSlot* p = &s_slots[slot];
-	return p->valid && p->moved && p->serial == s_serial && p->signature == signature ? p : NULL;
+	return p->moved && p->serial == s_serial && p->signature == signature ? p : NULL;
 }
 
 /* ---- per object --------------------------------------------------------- */
 
-static void present_object(XwaFlightObject* f, float alpha) {
+static const PresentPose* slot_pose(const PresentSlot* p, uint32_t serial, uint16_t signature) {
+	const PresentPose* pose = &p->hist[serial % PRESENT_HISTORY];
+	return serial && pose->serial == serial && pose->signature == signature ? pose : NULL;
+}
+
+/* Shows f at step `older` + alpha toward `older + 1`. */
+static void present_object(XwaFlightObject* f, uint32_t older, float alpha) {
 	PresentSlot* p = present_slot(f->slot);
 	if (!p) {
 		return;
 	}
-	const uint16_t now_ang[4] = { f->yaw, f->pitch, f->roll, f->angle_d };
-	if (p->serial != s_serial || !p->valid || p->signature != f->signature) {
-		const int continues =
-			p->valid && p->signature == f->signature && p->serial != s_serial && p->serial + 1u == s_serial;
-		if (continues) {
-			memcpy(p->prev_pos, p->curr_pos, sizeof p->prev_pos);
-			memcpy(p->prev_rows, p->curr_rows, sizeof p->prev_rows);
-			memcpy(p->prev_ang, p->curr_ang, sizeof p->prev_ang);
-			p->prev_spin = p->curr_spin;
-		} else {
-			/* New this step: start from where the engine says it moved
-			 * from (a launch point for projectiles); hold the turn. */
-			const int fresh_step = p->serial != s_serial;
-			memcpy(p->prev_pos, f->has_mobj && fresh_step ? f->prev_world_pos : f->world_pos,
-				   sizeof p->prev_pos);
-			memcpy(p->prev_rows, f->rows, sizeof p->prev_rows);
-			memcpy(p->prev_ang, now_ang, sizeof p->prev_ang);
-			p->prev_spin = f->spin_angle;
-		}
-		p->serial = s_serial;
-		p->signature = f->signature;
-		p->valid = 1;
-	}
-	memcpy(p->curr_pos, f->world_pos, sizeof p->curr_pos);
-	memcpy(p->curr_rows, f->rows, sizeof p->curr_rows);
-	memcpy(p->curr_ang, now_ang, sizeof p->curr_ang);
-	p->curr_spin = f->spin_angle;
+	PresentPose* now = &p->hist[s_serial % PRESENT_HISTORY];
+	now->serial = s_serial;
+	now->signature = f->signature;
+	memcpy(now->pos, f->world_pos, sizeof now->pos);
+	memcpy(now->prev_pos, f->has_mobj ? f->prev_world_pos : f->world_pos, sizeof now->prev_pos);
+	memcpy(now->rows, f->rows, sizeof now->rows);
+	now->ang[0] = f->yaw;
+	now->ang[1] = f->pitch;
+	now->ang[2] = f->roll;
+	now->ang[3] = f->angle_d;
+	now->spin = f->spin_angle;
+
+	p->serial = s_serial;
+	p->signature = f->signature;
 	p->moved = 0;
 	p->rotated = 0;
+	memcpy(p->curr_pos, f->world_pos, sizeof p->curr_pos);
 	memcpy(p->shown_pos, f->world_pos, sizeof p->shown_pos);
 	rows_to_axes(f->rows, p->curr_axes);
 	memcpy(p->shown_axes, p->curr_axes, sizeof p->shown_axes);
 
 	/* Tunnel slots are static-world proxies recycled along the trench. */
-	if (alpha >= 1.0f || f->genus == XWA_SNAP_GENUS_DS_TUNNEL) {
+	if (older >= s_serial || f->genus == XWA_SNAP_GENUS_DS_TUNNEL) {
 		return;
 	}
-
-	if (memcmp(p->prev_pos, p->curr_pos, sizeof p->prev_pos) != 0 &&
-		blend_pos(p->prev_pos, p->curr_pos, alpha, p->shown_pos)) {
-		memcpy(f->world_pos, p->shown_pos, sizeof f->world_pos);
-		p->moved = 1;
+	const PresentPose* b = slot_pose(p, older + 1, f->signature);
+	const PresentPose* a = slot_pose(p, older, f->signature);
+	PresentPose spawn;
+	if (!b) {
+		/* It appeared after the shown time: until that comes, hold it where
+		 * it came from (a laser at the gun), not where it already flew to. */
+		for (uint32_t j = older + 2; j <= s_serial; ++j) {
+			const PresentPose* first = slot_pose(p, j, f->signature);
+			if (first) {
+				int32_t from[3];
+				memcpy(f->world_pos, blend_pos(first->prev_pos, first->pos, 0.0f, from) ? from : first->pos,
+					   sizeof f->world_pos);
+				memcpy(p->shown_pos, f->world_pos, sizeof p->shown_pos);
+				p->moved = memcmp(p->shown_pos, p->curr_pos, sizeof p->shown_pos) != 0;
+				break;
+			}
+		}
+		return;
+	}
+	if (!a) {
+		/* New in step older+1: start from where the engine says it moved
+		 * from (a launch point for projectiles); hold the turn. */
+		spawn = *b;
+		memcpy(spawn.pos, b->prev_pos, sizeof spawn.pos);
+		a = &spawn;
 	}
 
-	if (memcmp(p->prev_rows, p->curr_rows, sizeof p->prev_rows) != 0) {
-		float prev_axes[9], curr_axes[9], shown[9];
-		rows_to_axes(p->prev_rows, prev_axes);
-		memcpy(curr_axes, p->curr_axes, sizeof curr_axes);
-		if (orthonormalize(prev_axes) && orthonormalize(curr_axes) &&
-			blend_basis(prev_axes, curr_axes, alpha, shown)) {
-			for (int k = 0; k < 9; ++k) {
-				f->rows[k] = axis_to_q15(shown[k]);
-			}
-			/* attached things: rotate with the exact bases */
-			memcpy(p->curr_axes, curr_axes, sizeof p->curr_axes);
-			memcpy(p->shown_axes, shown, sizeof p->shown_axes);
+	int32_t pos[3];
+	if (blend_pos(a->pos, b->pos, alpha, pos)) {
+		memcpy(f->world_pos, pos, sizeof f->world_pos);
+	} else {
+		memcpy(f->world_pos, b->pos, sizeof f->world_pos);
+	}
+	memcpy(p->shown_pos, f->world_pos, sizeof p->shown_pos);
+	p->moved = memcmp(p->shown_pos, p->curr_pos, sizeof p->shown_pos) != 0;
+
+	float a_axes[9], b_axes[9], shown[9], curr[9];
+	rows_to_axes(a->rows, a_axes);
+	rows_to_axes(b->rows, b_axes);
+	memcpy(curr, p->curr_axes, sizeof curr);
+	if (orthonormalize(a_axes) && orthonormalize(b_axes) && orthonormalize(curr) &&
+		blend_basis(a_axes, b_axes, alpha, shown)) {
+		for (int k = 0; k < 9; ++k) {
+			f->rows[k] = axis_to_q15(shown[k]);
+		}
+		/* attached things rotate with the exact bases */
+		memcpy(p->curr_axes, curr, sizeof p->curr_axes);
+		memcpy(p->shown_axes, shown, sizeof p->shown_axes);
+		if (memcmp(f->rows, now->rows, sizeof f->rows) != 0) {
 			p->moved = 1;
 			p->rotated = 1;
 		}
+	} else {
+		memcpy(f->rows, b->rows, sizeof f->rows);
 	}
 
 	/* The Euler path (orient-dirty objects, projectiles, debris spin). */
 	int angles_ok = 1;
-	int16_t d_ang[4];
 	for (int k = 0; k < 4; ++k) {
-		d_ang[k] = (int16_t)(uint16_t)(p->curr_ang[k] - p->prev_ang[k]);
-		if (d_ang[k] > PRESENT_MAX_ANGLE_DELTA || d_ang[k] < -PRESENT_MAX_ANGLE_DELTA) {
-			angles_ok = 0;
+		angles_ok &= angles_close(a->ang[k], b->ang[k]);
+	}
+	uint16_t* out[4] = { &f->yaw, &f->pitch, &f->roll, &f->angle_d };
+	for (int k = 0; k < 4; ++k) {
+		if (angles_ok) {
+			blend_angle(a->ang[k], b->ang[k], alpha, out[k]);
+		} else {
+			*out[k] = b->ang[k];
 		}
 	}
-	if (angles_ok) {
-		uint16_t* out[4] = { &f->yaw, &f->pitch, &f->roll, &f->angle_d };
-		for (int k = 0; k < 4; ++k) {
-			*out[k] = (uint16_t)(p->prev_ang[k] + (int)lrintf((float)d_ang[k] * alpha));
-		}
+	if (angles_close((uint16_t)a->spin, (uint16_t)b->spin)) {
+		uint16_t spin;
+		blend_angle((uint16_t)a->spin, (uint16_t)b->spin, alpha, &spin);
+		f->spin_angle = (int16_t)spin;
+	} else {
+		f->spin_angle = b->spin;
 	}
-	const int16_t d_spin = (int16_t)(uint16_t)((uint16_t)p->curr_spin - (uint16_t)p->prev_spin);
-	if (d_spin <= PRESENT_MAX_ANGLE_DELTA && d_spin >= -PRESENT_MAX_ANGLE_DELTA) {
-		f->spin_angle = (int16_t)(uint16_t)((uint16_t)p->prev_spin + (int)lrintf((float)d_spin * alpha));
+	if (f->yaw != now->ang[0] || f->pitch != now->ang[1] || f->roll != now->ang[2] || f->angle_d != now->ang[3] ||
+		f->spin_angle != now->spin) {
+		p->moved = 1;
 	}
 }
 
 /* ---- camera ------------------------------------------------------------ */
 
-static void present_camera(XwaSnapshot* s, float alpha) {
+static int camera_same_mode(const PresentCameraPose* a, const XwaFlightCamera* c) {
+	return a->region == c->region && a->external == c->external && a->map_mode == c->map_mode &&
+		   a->in_hangar == c->in_hangar && a->focus == c->focus_obj_idx;
+}
+
+static void present_camera(XwaSnapshot* s, uint32_t older, float alpha) {
 	XwaFlightCamera* c = &s->flight_camera;
-	PresentCamera* k = &s_cam;
-	const int same_mode = k->valid && k->region == c->region && k->external == c->external &&
-						  k->map_mode == c->map_mode && k->in_hangar == c->in_hangar &&
-						  k->focus == c->focus_obj_idx;
-	if (k->serial != s_serial || !same_mode) {
-		const int continues = same_mode && k->serial != s_serial && k->serial + 1u == s_serial;
-		if (continues) {
-			memcpy(k->prev_pos, k->curr_pos, sizeof k->prev_pos);
-			memcpy(k->prev_rows, k->curr_rows, sizeof k->prev_rows);
-		} else {
-			memcpy(k->prev_pos, c->world_pos, sizeof k->prev_pos);
-			memcpy(k->prev_rows, c->rows, sizeof k->prev_rows);
-		}
-		k->serial = s_serial;
-		k->valid = 1;
-		k->region = c->region;
-		k->external = c->external;
-		k->map_mode = c->map_mode;
-		k->in_hangar = c->in_hangar;
-		k->focus = c->focus_obj_idx;
-	}
-	memcpy(k->curr_pos, c->world_pos, sizeof k->curr_pos);
-	memcpy(k->curr_rows, c->rows, sizeof k->curr_rows);
-	if (alpha >= 1.0f) {
+	PresentCameraPose* now = &s_cam[s_serial % PRESENT_HISTORY];
+	now->serial = s_serial;
+	now->region = c->region;
+	now->external = c->external;
+	now->map_mode = c->map_mode;
+	now->in_hangar = c->in_hangar;
+	now->focus = c->focus_obj_idx;
+	memcpy(now->pos, c->world_pos, sizeof now->pos);
+	memcpy(now->rows, c->rows, sizeof now->rows);
+	if (older >= s_serial) {
 		return;
 	}
 
 	/* In the cockpit the eye rides on its craft: carry it rigidly with the
 	 * craft's shown pose, so cockpit, craft and eye never drift apart. */
 	const int32_t anchor_slot = c->in_hangar ? c->player_obj_idx : c->focus_obj_idx;
-	const PresentSlot* anchor = NULL;
 	if (!c->external && !c->map_mode && anchor_slot == c->player_obj_idx && anchor_slot >= 0 &&
-		(uint32_t)anchor_slot < s_slot_cap) {
-		const PresentSlot* p = &s_slots[anchor_slot];
-		if (p->valid && p->serial == s_serial) {
-			anchor = p;
-		}
-	}
-	if (anchor) {
+		(uint32_t)anchor_slot < s_slot_cap && s_slots[anchor_slot].serial == s_serial) {
+		const PresentSlot* anchor = &s_slots[anchor_slot];
 		if (!anchor->moved) {
 			return;
 		}
@@ -405,7 +484,7 @@ static void present_camera(XwaSnapshot* s, float alpha) {
 				slot_rotate(anchor, c->rows + r * 3, rows + r * 3);
 			}
 			memcpy(c->rows, rows, sizeof rows);
-			if (s->cockpit_valid && anchor_slot == c->player_obj_idx) {
+			if (s->cockpit_valid) {
 				XwaCockpit* cockpit = &s->cockpit;
 				float v[3];
 				slot_rotate(anchor, cockpit->hardpoint_world, v);
@@ -417,42 +496,76 @@ static void present_camera(XwaSnapshot* s, float alpha) {
 		return;
 	}
 
+	const PresentCameraPose* a = &s_cam[older % PRESENT_HISTORY];
+	const PresentCameraPose* b = &s_cam[(older + 1) % PRESENT_HISTORY];
+	if (a->serial != older || b->serial != older + 1 || !camera_same_mode(a, c) || !camera_same_mode(b, c)) {
+		return;
+	}
 	int32_t pos[3];
-	if (blend_pos(k->prev_pos, k->curr_pos, alpha, pos)) {
+	if (blend_pos(a->pos, b->pos, alpha, pos)) {
 		memcpy(c->world_pos, pos, sizeof pos);
 	}
-	float prev_rows[9], curr_rows[9], shown[9];
-	memcpy(prev_rows, k->prev_rows, sizeof prev_rows);
-	memcpy(curr_rows, k->curr_rows, sizeof curr_rows);
-	if (memcmp(prev_rows, curr_rows, sizeof prev_rows) != 0 && orthonormalize(prev_rows) &&
-		orthonormalize(curr_rows) && blend_basis(prev_rows, curr_rows, alpha, shown)) {
+	float ra[9], rb[9], shown[9];
+	memcpy(ra, a->rows, sizeof ra);
+	memcpy(rb, b->rows, sizeof rb);
+	if (orthonormalize(ra) && orthonormalize(rb) && blend_basis(ra, rb, alpha, shown)) {
 		memcpy(c->rows, shown, sizeof shown);
 	}
 }
 
 /* ---- the frame ------------------------------------------------------------ */
 
-void XwaSnapshotPresent_Apply(XwaSnapshot* s, int32_t game_time, int enabled) {
+void XwaSnapshotPresent_Apply(XwaSnapshot* s, int32_t game_time, uint64_t host_us, int enabled) {
 	if (!enabled || !s) {
 		if (s_have_step) {
 			XwaSnapshotPresent_Reset();
 		}
 		return;
 	}
-	if (s_have_step && game_time < s_step_time) {
+	if (s_have_step && game_time < step_time(s_serial)) {
 		XwaSnapshotPresent_Reset(); /* new session, or the clock was put back */
 	}
-	if (!s_have_step || game_time != s_step_time) {
-		s_have_prev_step = s_have_step;
-		s_prev_step_time = s_step_time;
-		s_step_time = game_time;
-		s_have_step = 1;
+	const int new_step = !s_have_step || game_time != step_time(s_serial);
+	if (new_step) {
 		++s_serial;
+		if (s_serial == 0) {
+			s_serial = 1;
+		}
+		s_step_time[s_serial % PRESENT_HISTORY] = game_time;
+		s_have_step = 1;
+		if (s_steps_kept < PRESENT_HISTORY) {
+			s_steps_kept++;
+		}
+		s_stats.steps++;
 	}
-	const float alpha = present_alpha();
+
+	/* The two kept steps around the shown time. */
+	const double shown = clock_advance(new_step, host_us);
+	uint32_t older = s_serial; /* = newest: no blending */
+	float alpha = 1.0f;
+	{
+		const uint32_t kept = s_steps_kept;
+		for (uint32_t back = 1; back < kept; ++back) {
+			const uint32_t k = s_serial - back;
+			const double t0 = (double)step_time(k);
+			const double t1 = (double)step_time(k + 1);
+			if (t1 <= t0) {
+				break;
+			}
+			if (shown >= t0 || back + 1 == kept) {
+				older = k;
+				alpha = (float)((shown - t0) / (t1 - t0));
+				alpha = alpha < 0.0f ? 0.0f : alpha > 1.0f ? 1.0f : alpha;
+				break;
+			}
+		}
+		if (older < s_serial && alpha >= 1.0f && older + 1 == s_serial) {
+			older = s_serial;
+		}
+	}
 
 	for (uint32_t i = 0; i < s->flight_object_count; ++i) {
-		present_object(&s->flight_objects[i], alpha);
+		present_object(&s->flight_objects[i], older, alpha);
 	}
 
 	/* Effects and trails attached to an object follow its shown pose. */
@@ -485,6 +598,6 @@ void XwaSnapshotPresent_Apply(XwaSnapshot* s, int32_t game_time, int enabled) {
 	}
 
 	if (s->flight_camera_valid) {
-		present_camera(s, alpha);
+		present_camera(s, older, alpha);
 	}
 }

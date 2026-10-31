@@ -16,7 +16,11 @@
 
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#ifdef XWA_MODERN
+#include <SDL3/SDL_stdinc.h>
+#endif
 
 // GLOBAL: XWA 0x770E7C
 int dpid;
@@ -1182,6 +1186,17 @@ int FlightNet_WaitForMissionStart(void) {
 			g_gameTime = 0;
 			g_inputTimestamp = 0;
 			g_flightNetClockLeadAllowanceMs = g_asyncFlag != 0 ? 130 : 30;
+#ifdef XWA_MODERN
+			{
+				/* How far (sim ticks) a player may run ahead of the last world
+				 * message: XWA_NET_LEAD_TICKS in openxwa-quest.cfg, to try
+				 * more prediction against network waits. */
+				const char* lead = SDL_getenv("XWA_NET_LEAD_TICKS");
+				if (lead && atoi(lead) >= 8 && atoi(lead) <= 400) {
+					g_flightNetClockLeadAllowanceMs = atoi(lead);
+				}
+			}
+#endif
 			switch (g_gameConfig.serverUpdateRate) {
 				case 4:
 					dtMs = 59;
