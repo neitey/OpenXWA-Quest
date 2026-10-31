@@ -27,8 +27,14 @@
 #include "xwa/frontend/mission_setup.h"
 #include "xwa/frontend/net_transport.h"
 
+#include <SDL3/SDL_timer.h>
+
 #include <stdio.h>
 #include <string.h>
+
+#ifndef OPENXWA_VERSION
+#define OPENXWA_VERSION "unknown"
+#endif
 
 #define NS_ADDRESS_FIELD_ID 77
 
@@ -175,6 +181,9 @@ int XwaNetScreens_JoinGame(int frameCounter) {
 	static int connecting;
 	static char target[96];
 	static char lastProbe[64];
+	static uint64_t searchStartMs;
+	static char ownAddresses[160];
+	static uint64_t ownAddressesMs;
 	XwaModernOptionsMenu menu;
 	NetPlayGameInfo games[6];
 	FrontendRect rect;
@@ -197,6 +206,8 @@ int XwaNetScreens_JoinGame(int frameCounter) {
 		}
 		NetPlay_DiscoveryStart(0);
 		g_activeTextFieldId = NS_ADDRESS_FIELD_ID;
+		searchStartMs = SDL_GetTicks();
+		ownAddressesMs = 0;
 	}
 
 	if (connecting) {
@@ -245,19 +256,43 @@ int XwaNetScreens_JoinGame(int frameCounter) {
 	XwaModernOptionsMenu_DrawTitle(&menu, "Join a game");
 	menu.y += 6;
 	if (gameCount == 0) {
+		const uint64_t nowMs = SDL_GetTicks();
 		ns_draw_centered("Looking for games on your network...", menu.y + 10, 12, g_colorPaleBlue);
 		menu.y += 40;
+		if (nowMs - searchStartMs >= 5000) {
+			/* Nothing answered: say why that usually is, and what to type. */
+			if (!ownAddressesMs || nowMs - ownAddressesMs >= 2000) {
+				char addresses[128];
+				ownAddressesMs = nowMs;
+				if (NetPlay_GetLocalAddresses(addresses, (int)sizeof addresses) > 0) {
+					snprintf(ownAddresses, sizeof ownAddresses, "This machine: %s", addresses);
+				} else {
+					snprintf(ownAddresses, sizeof ownAddresses, "This machine has no network address.");
+				}
+			}
+			ns_draw_centered("No games found. Both devices must be on the same Wi-Fi", menu.y, 12, g_colorLightBlue);
+			snprintf(line, sizeof line, "(not a guest network) and the host must allow UDP port %d.",
+					 NETPLAY_DEFAULT_PORT);
+			ns_draw_centered(line, menu.y + 16, 12, g_colorLightBlue);
+			ns_draw_centered("Or type the host's address below.", menu.y + 32, 12, g_colorLightBlue);
+			ns_draw_centered(ownAddresses, menu.y + 56, 12, g_colorPaleBlue);
+			menu.y += 80;
+		}
 	}
 	for (int i = 0; i < gameCount; ++i) {
 		NetPlayGameInfo* g = &games[i];
 		int usable = g->open && g->compatible && g->players < g->maxPlayers;
 
-		snprintf(line, sizeof line, "%s  (%d/%d%s)  %u ms", g->gameName[0] ? g->gameName : g->hostName,
+		char version[32] = "";
+		if (g->version[0] && strcmp(g->version, OPENXWA_VERSION) != 0) {
+			snprintf(version, sizeof version, " v%s", g->version);
+		}
+		snprintf(line, sizeof line, "%s  (%d/%d%s%s)  %u ms", g->gameName[0] ? g->gameName : g->hostName,
 				 g->players, g->maxPlayers,
 				 !g->compatible ? ", other version"
 				 : !g->open     ? ", in progress"
 								: "",
-				 (unsigned)g->pingMs);
+				 version, (unsigned)g->pingMs);
 		if (XwaModernOptionsMenu_DrawAction(&menu, line, 71 + i, !usable) && usable && !joinAddress) {
 			snprintf(target, sizeof target, "%s:%u", g->address, (unsigned)g->port);
 			joinAddress = target;

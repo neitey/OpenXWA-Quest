@@ -73,6 +73,7 @@ typedef struct NetPlayGameInfo {
 	int maxPlayers;
 	int open; /* accepting players (the host is in the lobby) */
 	int compatible;
+	char version[16]; /* the host's build version; empty for older builds */
 	uint32_t pingMs;
 	uint32_t lastSeenMs;
 } NetPlayGameInfo;
