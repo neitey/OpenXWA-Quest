@@ -134,7 +134,7 @@ OpenXR is part of the same source. The upstream build notes are below.
 ## Credits
 
 - **AI assisted coding:** Neitey
-- **VR design, menu environments & QA:** MarkD
+- **VR design, menu environments & QA:** Bummser
 - **OpenXWA:** Adrien Moulin and contributors
 
 VR-specific code was generated using Claude AI; additional artwork was created
