@@ -11,6 +11,8 @@
 #include <SDL3/SDL_stdinc.h>
 #include "xwa_runtime/snapshot/snapshot_flight_map.h"
 #include "xwa_runtime/snapshot/snapshot_hud.h"
+#include "xwa_runtime/snapshot/snapshot_present.h"
+#include "xwa_runtime/timing/modern_flight_timing.h"
 
 #include "aeron/aeron.h"
 #include "xwa/assets/model_def.h"
@@ -1576,6 +1578,17 @@ void XwaSnapshot_CaptureFlight(void) {
 	}
 
 	XwaSnapshotHud_Capture(&s->hud);
+
+	/* Coarse sim steps (multiplayer): show the poses at an evenly advancing
+	 * presentation time between the last two steps. Hyperspace and film
+	 * playback jump; they show the newest step. */
+	{
+		const int mode = XwaSnapshotPresent_Mode();
+		const int enabled = mode != 0 && (mode == 1 || XwaModernFlightTiming_StepTicks() > 1) &&
+							!g_filmPlaybackMode &&
+							g_players[g_localPlayer].hyperspacePhase == PLAYER_HYPERSPACE_PHASE_NONE;
+		XwaSnapshotPresent_Apply(s, g_gameTime, enabled);
+	}
 }
 
 static GlowMarkCaptureMeta* glow_mark_meta_for_patch(const void* ptr) {
