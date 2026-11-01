@@ -6494,6 +6494,26 @@ void Flight_AdvanceOneStep(int targetTimestamp) {
 				ComputeHardpointWorldPos(selectedPlayer);
 			}
 
+#ifdef XWA_MODERN
+			/* Port fix: the pose a later, older-than-the-world frame rewinds to
+			 * (the checkpoint branch above) was saved after the craft moved to
+			 * this frame but before this frame's stick input turned it. Every
+			 * rewind then dropped one input frame of turning: in multiplayer,
+			 * whenever a world message reached past the player's newest input
+			 * (the host, whose lead is small), the own craft's turn and roll
+			 * jumped back at each rollback. Save the turned orientation. */
+			{
+				const int checkpointObject = g_players[selectedPlayer].objectIndex;
+				if (checkpointObject != 0xffff && g_players[selectedPlayer].regionIndex != g_hangarSceneRegionIdx &&
+					g_objectTable[checkpointObject].mobj != NULL &&
+					g_objectTable[checkpointObject].mobj->simStateTimestamp == frame->timestamp &&
+					g_objectTable[checkpointObject].objectSignature == (uint16_t)g_players[selectedPlayer].savedFieldId) {
+					g_players[selectedPlayer].savedRoll = (int16_t)g_objectTable[checkpointObject].roll;
+					g_players[selectedPlayer].savedPitch = (int16_t)g_objectTable[checkpointObject].pitch;
+					g_players[selectedPlayer].savedYaw = (int16_t)g_objectTable[checkpointObject].yaw;
+				}
+			}
+#endif
 			g_gameTime = savedGameTime;
 			g_flightSfxSideEffectGate = 0;
 			g_elapsedTicks = savedElapsedTicks;

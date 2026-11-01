@@ -818,8 +818,15 @@ int MissionBriefing_PlayNarrationSequenceStart(void) {
 	char separator;
 	char waveId[12];
 
+#ifdef XWA_MODERN
+	if (sscanf(g_missionList[g_selectedMissionListIndex].fileName, "%d%c%d%c%d", &missionPrefix, &separator,
+			   &battleNumber, &separator, &missionNumber) != 5) {
+		return 0;
+	}
+#else
 	sscanf(g_missionList[g_selectedMissionListIndex].fileName, "%d%c%d%c%d", &missionPrefix, &separator,
 		   &battleNumber, &separator, &missionNumber);
+#endif
 	if ((unsigned int)battleNumber > 99u || (unsigned int)missionNumber > 99u) {
 		return 0;
 	}
@@ -846,8 +853,19 @@ int MissionBriefing_PlayTextBlockVoice(int textBlockIndex) {
 	char separator;
 	char waveId[12];
 
+#ifdef XWA_MODERN
+	/* Port: a melee or skirmish mission's file name has no battle and
+	 * mission number, which left them unset and overran waveId. */
+	if (sscanf(g_missionList[g_selectedMissionListIndex].fileName, "%d%c%d%c%d", &missionPrefix, &separator,
+			   &battleNumber, &separator, &missionNumber) != 5 ||
+		(unsigned int)battleNumber > 99u || (unsigned int)missionNumber > 99u ||
+		(unsigned int)textBlockIndex > 98u) {
+		return 0;
+	}
+#else
 	sscanf(g_missionList[g_selectedMissionListIndex].fileName, "%d%c%d%c%d", &missionPrefix, &separator,
 		   &battleNumber, &separator, &missionNumber);
+#endif
 	sprintf(waveId, "%2d%2d%2d", battleNumber, missionNumber, textBlockIndex + 1);
 	if (waveId[0] == ' ') {
 		waveId[0] = '0';

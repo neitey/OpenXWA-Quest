@@ -48,7 +48,16 @@ void XwaTime_AdvanceHostClock(int32_t delta_us) {
 }
 
 void XwaTime_NoteFrameDeltaPoll(void) {
-	if (++g_framePolls > XWA_BLOCKING_WAIT_POLLS) {
+	if (++g_framePolls == XWA_BLOCKING_WAIT_POLLS + 1) {
+		/* The wait starts now: real time counts from here, not from the
+		 * frame's start. A wait in the frame that loaded the mission (the
+		 * session start's handshake) otherwise began with the whole load
+		 * time on the clock, and the host could take that as its lead over
+		 * the world (seconds of lag that took minutes to wear off). */
+		g_frameBaseUs = g_maxReturnedUs > g_xwaElapsedUs ? g_maxReturnedUs : g_xwaElapsedUs;
+		g_frameRealStartUs = Aeron_NowUs();
+	}
+	if (g_framePolls > XWA_BLOCKING_WAIT_POLLS) {
 		SDL_Delay(1);
 	}
 }

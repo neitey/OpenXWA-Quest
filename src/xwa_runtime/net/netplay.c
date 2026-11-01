@@ -55,7 +55,7 @@ typedef int NpSocket;
 /* Bump when the flight simulation or the session messages change in a way
  * older builds cannot follow (lockstep would desync). Hosts and clients that
  * send no revision (earlier builds of this protocol) count as compatible. */
-#define NP_SIM_REVISION 2u /* 2: world checksum over the portable saved state */
+#define NP_SIM_REVISION 3u /* 2: world checksum over the portable saved state; 3: rollback keeps the turned pose */
 #define NP_VERSION_LEN 16
 #define NP_HEADER 8
 #define NP_MTU 1232
