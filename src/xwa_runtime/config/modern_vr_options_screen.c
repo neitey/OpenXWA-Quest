@@ -501,6 +501,10 @@ static const struct {
 void XwaModernVrOptions_RestoreDefaults(void) {
 	const char* keys[VR_COUNT];
 	const char* values[VR_COUNT];
+	/* Quest 2 class (the tier XwaXrTier_ApplyDefaults found): the flight
+	 * view without bloom, for frame rate. */
+	const char* tier = SDL_getenv("XWA_XR_TIER_ACTIVE");
+	const int low_tier = tier && strcmp(tier, "low") == 0;
 	for (int i = 0; i < VR_COUNT; i++) {
 		keys[i] = k_settings[i].key;
 		values[i] = k_settings[i].values[k_settings[i].fallback];
@@ -508,6 +512,9 @@ void XwaModernVrOptions_RestoreDefaults(void) {
 			if (strcmp(k_recommended[r].key, keys[i]) == 0) {
 				values[i] = k_recommended[r].value;
 			}
+		}
+		if (low_tier && strcmp(keys[i], "XWA_XR_DIRECT_OUTPUT") == 0) {
+			values[i] = "1";
 		}
 		SDL_setenv_unsafe(keys[i], values[i], 1);
 	}
