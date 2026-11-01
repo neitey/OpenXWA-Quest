@@ -170,7 +170,18 @@ static double clock_advance(int new_step, uint64_t host_us) {
 	lag = lag < PRESENT_MIN_LAG ? PRESENT_MIN_LAG : lag > PRESENT_MAX_LAG ? PRESENT_MAX_LAG : lag;
 	s_clock.lag = lag;
 
-	const double target = newest - lag;
+	/* The aim moves on with host time between arrivals too, so steady
+	 * arrivals do not pull the shown time back and forth at the step rate
+	 * (a sawtooth target made the turning speed pulse by ~7 %). */
+	double target = newest - lag;
+	if (s_clock.arrivals) {
+		const uint64_t last = s_clock.arrival_us[(s_clock.arrivals - 1) % PRESENT_ARRIVALS];
+		double since = host_us > last ? (double)(host_us - last) * clock_speed() : 0.0;
+		if (since > lag - 0.5) {
+			since = lag - 0.5 > 0.0 ? lag - 0.5 : 0.0;
+		}
+		target += since;
+	}
 	if (!s_clock.valid) {
 		s_clock.valid = 1;
 		s_clock.present = target;
