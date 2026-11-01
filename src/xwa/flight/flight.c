@@ -3784,6 +3784,48 @@ int Flight_ChecksumWorldState(int expectedChecksum, int serverTicks) {
 	uint16_t randSeed;
 	int finalSegmentSize;
 
+#ifdef XWA_MODERN
+	/* The classic walk below steps through the world state with the
+	 * original 32-bit record layout (mobj pointer at +35, 229-byte mobj with
+	 * its links at +217/+221/+225). Flight_SaveWorldState writes the portable
+	 * layout instead (mobj link at +12, links at +138/+142/+146), so the walk
+	 * lost its place after the first object and summed bytes past the saved
+	 * state: memory that differs between two machines. Every checksum epoch
+	 * then reported a mismatch although both players' saved states were
+	 * byte-identical (multiplayer dumps from a Quest 3 and a Quest 2), and
+	 * the host resent the world every ~2 s. The saved state is deterministic
+	 * and fully portable, so the modern build checksums exactly its bytes:
+	 * sixteen equal parts, FNV-1a each. */
+	{
+		uint32_t total = 0;
+		const int size = g_worldStateSize > 0 ? g_worldStateSize : 0;
+		(void)expectedChecksum;
+		(void)serverTicks;
+		(void)cursor;
+		(void)segmentStart;
+		(void)segmentThreshold;
+		(void)segmentIndex;
+		(void)sectionChecksum;
+		(void)totalChecksum;
+		(void)calculatedChecksum;
+		(void)slot;
+		(void)byteCount;
+		(void)randSeed;
+		(void)finalSegmentSize;
+		for (int part = 0; part < 16; ++part) {
+			const int begin = (int)((int64_t)size * part / 16);
+			const int end = (int)((int64_t)size * (part + 1) / 16);
+			uint32_t hash = 2166136261u;
+			for (int i = begin; i < end; ++i) {
+				hash = (hash ^ g_worldStateBuffer[i]) * 16777619u;
+			}
+			g_worldChecksum[part] = hash;
+			peerChecksum[part] = (uint32_t)(end - begin);
+			total += hash;
+		}
+		return (int)total;
+	}
+#endif
 	segmentThreshold = g_worldStateSize >> 4;
 	cursor = g_worldStateBuffer;
 	totalChecksum = 0;
