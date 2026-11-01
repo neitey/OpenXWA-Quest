@@ -1,4 +1,7 @@
 #include "xwa/flight/flight_sync.h"
+#ifdef XWA_MODERN
+#include "aeron/log.h"
+#endif
 
 #include "xwa/audio/sound.h"
 #include "xwa/flight/fediskio.h"
@@ -754,11 +757,42 @@ void FlightSync_HandleWorldChecksumPacket(int senderDpid, const int* packet) {
 		}
 		(void)packetPeerChecksumSum;
 		(void)localPeerChecksumSum;
+#ifdef XWA_MODERN
+		if (mismatch) {
+			/* Which sixteenths of the world state differ (objects come
+			 * first, the players' records last): where a desync starts. */
+			char parts[64];
+			int len = 0;
+			parts[0] = '\0';
+			for (checksumIndex = 0; checksumIndex < 16 && len < (int)sizeof parts - 4; ++checksumIndex) {
+				if (packet[2 + checksumIndex] != (int)g_worldChecksum[checksumIndex]) {
+					len += snprintf(parts + len, sizeof parts - (size_t)len, " %d", checksumIndex);
+				}
+			}
+			Aeron_LogWarn("xwa.mp", "world checksum mismatch with player %d at tick %d (parts%s): resending the world",
+						  playerSlot, packet[1], parts);
+		}
+#endif
 
 		if (mismatch) {
+#ifdef XWA_MODERN
+			/* The resync waits pump the packet queue, which can deliver
+			 * another checksum packet: never start a second resync inside
+			 * the first (the stack ran out that way). The newer mismatch
+			 * is resent at the next checksum epoch. */
+			static int resyncInProgress;
+			if (!resyncInProgress) {
+				resyncInProgress = 1;
+				if (FlightNet_SendWorldStateResyncToPlayer(senderDpid, g_worldStateDupBuffer, worldStateSize)) {
+					FlightNet_SendWorldStateResyncApplyRequest(senderDpid, worldStateSize);
+				}
+				resyncInProgress = 0;
+			}
+#else
 			if (FlightNet_SendWorldStateResyncToPlayer(senderDpid, g_worldStateDupBuffer, worldStateSize)) {
 				FlightNet_SendWorldStateResyncApplyRequest(senderDpid, worldStateSize);
 			}
+#endif
 			mismatch = 1;
 		}
 	}
