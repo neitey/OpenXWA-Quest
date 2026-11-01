@@ -25,6 +25,9 @@ typedef struct PresentPose {
 	uint32_t serial; /* step this pose belongs to; 0 = empty */
 	uint16_t signature;
 	int16_t spin;
+	/* The cached rows were stale at this step (MobileObject.orientMatrixDirty:
+	 * a rollback marks every object so): only the angles were valid. */
+	uint8_t rows_stale;
 	int32_t pos[3];
 	int16_t rows[9];
 	uint16_t ang[4];
@@ -350,6 +353,7 @@ static void present_object(XwaFlightObject* f, uint32_t older, float alpha) {
 	now->ang[2] = f->roll;
 	now->ang[3] = f->angle_d;
 	now->spin = f->spin_angle;
+	now->rows_stale = (uint8_t)(!f->has_mobj || f->orient_dirty);
 
 	p->serial = s_serial;
 	p->signature = f->signature;
@@ -404,8 +408,15 @@ static void present_object(XwaFlightObject* f, uint32_t older, float alpha) {
 	rows_to_axes(a->rows, a_axes);
 	rows_to_axes(b->rows, b_axes);
 	memcpy(curr, p->curr_axes, sizeof curr);
-	if (orthonormalize(a_axes) && orthonormalize(b_axes) && orthonormalize(curr) &&
-		blend_basis(a_axes, b_axes, alpha, shown)) {
+	if (a->rows_stale || b->rows_stale || now->rows_stale) {
+		/* Stale rows in the bracket (after a multiplayer rollback): show
+		 * the orientation by the angles, blended below, as the renderer
+		 * does for an object whose matrix is out of date. */
+		if (f->has_mobj) {
+			f->orient_dirty = 1;
+		}
+	} else if (orthonormalize(a_axes) && orthonormalize(b_axes) && orthonormalize(curr) &&
+			   blend_basis(a_axes, b_axes, alpha, shown)) {
 		for (int k = 0; k < 9; ++k) {
 			f->rows[k] = axis_to_q15(shown[k]);
 		}
@@ -468,34 +479,6 @@ static void present_camera(XwaSnapshot* s, uint32_t older, float alpha) {
 		return;
 	}
 
-	/* In the cockpit the eye rides on its craft: carry it rigidly with the
-	 * craft's shown pose, so cockpit, craft and eye never drift apart. */
-	const int32_t anchor_slot = c->in_hangar ? c->player_obj_idx : c->focus_obj_idx;
-	if (!c->external && !c->map_mode && anchor_slot == c->player_obj_idx && anchor_slot >= 0 &&
-		(uint32_t)anchor_slot < s_slot_cap && s_slots[anchor_slot].serial == s_serial) {
-		const PresentSlot* anchor = &s_slots[anchor_slot];
-		if (!anchor->moved) {
-			return;
-		}
-		slot_carry_i32(anchor, c->world_pos);
-		if (anchor->rotated) {
-			float rows[9];
-			for (int r = 0; r < 3; ++r) {
-				slot_rotate(anchor, c->rows + r * 3, rows + r * 3);
-			}
-			memcpy(c->rows, rows, sizeof rows);
-			if (s->cockpit_valid) {
-				XwaCockpit* cockpit = &s->cockpit;
-				float v[3];
-				slot_rotate(anchor, cockpit->hardpoint_world, v);
-				memcpy(cockpit->hardpoint_world, v, sizeof v);
-				slot_rotate(anchor, cockpit->camera_pan, v);
-				memcpy(cockpit->camera_pan, v, sizeof v);
-			}
-		}
-		return;
-	}
-
 	const PresentCameraPose* a = &s_cam[older % PRESENT_HISTORY];
 	const PresentCameraPose* b = &s_cam[(older + 1) % PRESENT_HISTORY];
 	if (a->serial != older || b->serial != older + 1 || !camera_same_mode(a, c) || !camera_same_mode(b, c)) {
@@ -505,11 +488,26 @@ static void present_camera(XwaSnapshot* s, uint32_t older, float alpha) {
 	if (blend_pos(a->pos, b->pos, alpha, pos)) {
 		memcpy(c->world_pos, pos, sizeof pos);
 	}
-	float ra[9], rb[9], shown[9];
+	/* The camera's own rows come from the render camera every step, so they
+	 * are never stale (the craft's cached rows can be, after a rollback). */
+	float ra[9], rb[9], rn[9], shown[9];
 	memcpy(ra, a->rows, sizeof ra);
 	memcpy(rb, b->rows, sizeof rb);
-	if (orthonormalize(ra) && orthonormalize(rb) && blend_basis(ra, rb, alpha, shown)) {
+	memcpy(rn, c->rows, sizeof rn);
+	if (orthonormalize(ra) && orthonormalize(rb) && orthonormalize(rn) && blend_basis(ra, rb, alpha, shown)) {
 		memcpy(c->rows, shown, sizeof shown);
+		if (s->cockpit_valid) {
+			/* The cockpit hangs off the eye by world vectors that turn with
+			 * the craft: turn them with the eye. */
+			float* vectors[2] = { s->cockpit.hardpoint_world, s->cockpit.camera_pan };
+			for (int i = 0; i < 2; ++i) {
+				const float* v = vectors[i];
+				const float local[3] = { dot3(rn, v), dot3(rn + 3, v), dot3(rn + 6, v) };
+				for (int k = 0; k < 3; ++k) {
+					vectors[i][k] = local[0] * shown[k] + local[1] * shown[3 + k] + local[2] * shown[6 + k];
+				}
+			}
+		}
 	}
 }
 
