@@ -1115,6 +1115,69 @@ static void snapshot_capture_particles(XwaSnapshot* s, uint32_t render_state_slo
 	}
 }
 
+/* Multiplayer frame trace (XWA_MP_TRACE=1, e.g. in openxwa-quest.cfg):
+ * mp_trace.txt next to openxwa.log, one line per host frame for the first
+ * 20000 frames of each multiplayer flight: host time, the sim clocks, the
+ * player craft as simulated and the eye before and after the presentation
+ * smoothing. For finding judder a tester sees but a log line cannot show. */
+static FILE* g_mp_trace;
+static int g_mp_trace_lines;
+
+static int snapshot_mp_trace_open(void) {
+	static int state = -1; /* -1 unknown, 0 off, 1 on */
+	if (state < 0) {
+		const char* env = getenv("XWA_MP_TRACE");
+		state = env && env[0] == '1';
+	}
+	if (!state || g_mp_trace_lines >= 20000) {
+		return 0;
+	}
+	if (!g_mp_trace) {
+		char path[1024];
+		const char* log = getenv("AERON_LOG_FILE");
+		const char* slash = log ? strrchr(log, '/') : NULL;
+		if (slash) {
+			snprintf(path, sizeof path, "%.*s/mp_trace.txt", (int)(slash - log), log);
+		} else {
+			snprintf(path, sizeof path, "mp_trace.txt");
+		}
+		g_mp_trace = fopen(path, "w");
+		if (!g_mp_trace) {
+			state = 0;
+			return 0;
+		}
+		fprintf(g_mp_trace, "# host_us game server input | player x y z yaw pitch roll dirty | eye raw x y z r0..r8 | "
+							"eye shown x y z r0..r8\n");
+	}
+	return 1;
+}
+
+static void snapshot_mp_trace_line(const XwaSnapshot* s, const float raw_rows[9], const int32_t raw_pos[3]) {
+	const XwaFlightCamera* c = &s->flight_camera;
+	const int player = g_players[g_localPlayer].objectIndex;
+	fprintf(g_mp_trace, "%llu %d %d %d |", (unsigned long long)XwaTime_GetElapsedUs(), g_gameTime, g_serverTickTime,
+			g_inputTimestamp);
+	if (player >= 0 && (uint32_t)player < g_objectTableSlotCount && g_objectTable[player].objectType != OBJ_None) {
+		const ObjectRecord* o = &g_objectTable[player];
+		fprintf(g_mp_trace, " %d %d %d %u %u %u %d |", o->world_x, o->world_y, o->world_z, (unsigned)o->yaw,
+				(unsigned)o->pitch, (unsigned)o->roll, o->mobj ? (int)o->mobj->orientMatrixDirty : -1);
+	} else {
+		fprintf(g_mp_trace, " - |");
+	}
+	fprintf(g_mp_trace, " %d %d %d", raw_pos[0], raw_pos[1], raw_pos[2]);
+	for (int k = 0; k < 9; ++k) {
+		fprintf(g_mp_trace, " %.5f", raw_rows[k]);
+	}
+	fprintf(g_mp_trace, " | %d %d %d", c->world_pos[0], c->world_pos[1], c->world_pos[2]);
+	for (int k = 0; k < 9; ++k) {
+		fprintf(g_mp_trace, " %.5f", c->rows[k]);
+	}
+	fputc('\n', g_mp_trace);
+	if (++g_mp_trace_lines % 200 == 0 || g_mp_trace_lines >= 20000) {
+		fflush(g_mp_trace);
+	}
+}
+
 void XwaSnapshot_CaptureFlight(void) {
 	XwaSnapshot* s = wr();
 	s->flight_object_count = 0;
@@ -1588,7 +1651,17 @@ void XwaSnapshot_CaptureFlight(void) {
 		const int enabled = mode != 0 && (mode == 1 || XwaModernFlightTiming_StepTicks() > 1) &&
 							!g_filmPlaybackMode &&
 							g_players[g_localPlayer].hyperspacePhase == PLAYER_HYPERSPACE_PHASE_NONE;
+		const int trace = enabled && XwaModernFlightTiming_StepTicks() > 1 && snapshot_mp_trace_open();
+		float raw_rows[9];
+		int32_t raw_pos[3];
+		if (trace) {
+			memcpy(raw_rows, s->flight_camera.rows, sizeof raw_rows);
+			memcpy(raw_pos, s->flight_camera.world_pos, sizeof raw_pos);
+		}
 		XwaSnapshotPresent_Apply(s, g_gameTime, XwaTime_GetElapsedUs(), enabled);
+		if (trace) {
+			snapshot_mp_trace_line(s, raw_rows, raw_pos);
+		}
 	}
 }
 
