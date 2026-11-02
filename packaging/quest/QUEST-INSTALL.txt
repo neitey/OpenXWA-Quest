@@ -105,10 +105,19 @@ Other headsets (same APK, from 0.0.17-quest100)
     Lepton Development -> Properties) to  LEPTON_NO_CLEANUP=1 %command%
     Without this, closing Lepton Development deletes every app installed
     with adb, with its files; with it they should stay. Then start "Lepton
-    Development", connect adb (adb forward tcp:5555 tcp:5555, then
-    adb connect localhost:5555), install as above and start it from the
-    Android home screen in the Lepton Development window. Copy the game
-    files with adb push as in step 3.
+    Development" and connect adb over Wi-Fi (adb connect frame:5555, or the
+    headset's IP address from Quick Settings; other Lepton instances use
+    ports 5556-5599) or over USB (adb forward tcp:5555 tcp:5555, then
+    adb connect localhost:5555). If Wi-Fi is refused, tunnel through SSH
+    with the Developer Mode password:
+      ssh -N -L 127.0.0.1:15555:127.0.0.1:5555 steamos@frame
+      adb connect 127.0.0.1:15555
+    Install as above and start it from the Android home screen in the
+    Lepton Development window. Copy the game files as in step 2.
+  * Quest / Pico over Wi-Fi: connect USB first, then
+      adb tcpip 5555
+      adb connect <headset IP>:5555
+    and unplug. It lasts until the headset sleeps or restarts.
   The game picks its defaults from the GPU (see the log's "device tier"
   line): Quest 2 and Pico 4 render fewer pixels at 72 Hz with stronger
   foveation; Quest 3 is unchanged; Steam Frame gets a larger pixel budget.

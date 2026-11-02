@@ -125,7 +125,7 @@ func (a *app) copyPilots() error {
 // pilotsDone checks that the app can read pilot-import, then reports.
 func (a *app) pilotsDone() error {
 	m := a.remoteOwners(a.remotePilots())
-	if o, ok := m[a.remotePilots()]; ok && foreignOwner(o, a.appUID()) {
+	if o, ok := m[a.remotePilots()]; ok && a.foreign(o) {
 		logf("pilot-import belongs to %v; removing it", o)
 		a.adb.shell(60*time.Second, "rm -rf "+shQuote(a.remotePilots()))
 		say("WARNING: the pilots could not be copied in a way the game can read on this\n" +

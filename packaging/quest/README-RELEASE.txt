@@ -1,8 +1,8 @@
 Neitey's XW: Alliance VR @VERSION@ - X-Wing Alliance in standalone VR
 =====================================================================
 
-Play your own copy of Star Wars: X-Wing Alliance on Meta Quest 3 / 3S.
-Pico and Steam Frame are supported but not tested yet.
+Play your own copy of Star Wars: X-Wing Alliance on Meta Quest 3 / 3S
+and Steam Frame. Pico is supported but not tested yet.
 
 Neitey's XW: Alliance VR is based on OpenXWA
 (https://github.com/elyosh/OpenXWA) by Adrien Moulin, the open-source
@@ -17,7 +17,8 @@ Before you start (once)
 1. Turn on Developer Mode for the headset:
    Meta Horizon phone app -> Devices -> your headset -> Headset settings ->
    Developer Mode (needs a free Meta developer account).
-2. Have a USB-C cable that carries data (not a charge-only cable).
+2. Have a USB-C cable that carries data (not a charge-only cable). The
+   Steam Frame needs no cable (see "Steam Frame" below).
 
 
 Install (and update)
@@ -25,6 +26,8 @@ Install (and update)
 1. Unzip this folder anywhere on the PC.
 2. Connect the headset to the PC with the USB cable.
 3. Double-click OpenXWA-VR-Launcher.exe and follow the steps in the window.
+   It first asks how to reach the headset: "USB cable", "USB, then switch
+   to Wi-Fi" or "Wi-Fi" (it remembers your choice).
    It finds your X-Wing Alliance, installs the app on the headset, copies
    the game files (about 1 GB, a few minutes), checks every file arrived
    and asks whether to bring your PC pilots along.
@@ -37,15 +40,41 @@ After you have allowed USB debugging once, the headset can stay on the desk
 (switched on, cable connected) while the launcher copies: the app
 receives and unpacks the files itself, without starting the game.
 
-Steam Frame: turn on Developer Mode. Once, before starting "Lepton
-Development": in your Steam Library, open its Properties and set Launch
-Options to
+Unplugging during the copy (Quest, Pico): choose "USB, then switch to
+Wi-Fi". After the USB connection works, the launcher switches the headset
+to Wi-Fi (adb tcpip) and tells you when you can unplug. This lasts until
+the headset sleeps or restarts, so keep it awake while the files are
+copied; the PC and the headset must be on the same network. If the
+connection drops, the launcher reconnects and continues; a new run only
+copies what is missing.
+
+Steam Frame (recommended way): turn on Developer Mode on the headset
+(Steam Settings > System; it asks you to set a password). In the launcher
+choose "Steam Frame (into its Steam Library)" and enter "frame" or the
+headset's IP address (Quick Settings, or Steam Settings > Internet), then
+the Developer Mode password when asked (used only for this connection,
+never saved). The launcher copies the app and your game files to the
+headset over Wi-Fi (SSH, user "steamos") and adds Neitey's XW: Alliance VR
+to the headset's Steam Library, with its artwork. Start it from there like
+any other game ("Lepton Development" is not needed). Nothing is deleted
+when the game closes; run the launcher again to update it.
+- The PC and the Frame must be on the same network; guest networks with
+  "client isolation" do not work.
+- The launcher uses Windows' own SSH client. If it is missing: Settings >
+  System > Optional features > Add a feature > "OpenSSH Client".
+- Steam names the entry "Devkit Game: ..."; rename it in its Properties
+  if you like.
+
+Steam Frame, the older way through "Lepton Development" (Android window):
+once, in your Steam Library, open the Properties of "Lepton Development"
+and set its Launch Options to
    LEPTON_NO_CLEANUP=1 %command%
-Without this, closing Lepton Development deletes the app and the copied
-game files; with it they should stay. Then start "Lepton Development"
-and keep it running; the launcher connects to it over the USB cable (or
-Wi-Fi). Neitey's XW: Alliance VR appears in the Lepton Development
-window's Android home screen. Not tested on a Steam Frame yet.
+(without this, closing Lepton Development deletes the app and the copied
+game files). Start "Lepton Development" and keep it running, then choose
+"Wi-Fi" (or USB) in the launcher; if the direct connection is refused,
+choose "Connect through SSH". Allow USB debugging in the Lepton window
+when asked. The game then appears on the Android home screen in the
+Lepton Development window.
 
 Windows may say "Windows protected your PC": the launcher is not
 code-signed yet. Click "More info", then "Run anyway".

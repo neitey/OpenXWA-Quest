@@ -8,6 +8,8 @@
  */
 #include "xwa_runtime/net/netplay_screens.h"
 
+#include "aeron/aeron.h"
+
 #include "xwa_runtime/config/modern_options_menu.h"
 #include "xwa_runtime/net/netplay.h"
 #include "xwa_runtime/net/netplay_game.h"
@@ -15,6 +17,7 @@
 #include "xwa/config/game_config.h"
 #include "xwa/frontend/combat_sim_menu.h"
 #include "xwa/frontend/frontend_color.h"
+#include "xwa/frontend/frontend_cursor.h"
 #include "xwa/frontend/frontend_display.h"
 #include "xwa/frontend/frontend_draw.h"
 #include "xwa/frontend/frontend_image.h"
@@ -27,8 +30,14 @@
 #include "xwa/frontend/mission_setup.h"
 #include "xwa/frontend/net_transport.h"
 
+#include <SDL3/SDL_timer.h>
+
 #include <stdio.h>
 #include <string.h>
+
+#ifndef OPENXWA_VERSION
+#define OPENXWA_VERSION "unknown"
+#endif
 
 #define NS_ADDRESS_FIELD_ID 77
 
@@ -175,6 +184,9 @@ int XwaNetScreens_JoinGame(int frameCounter) {
 	static int connecting;
 	static char target[96];
 	static char lastProbe[64];
+	static uint64_t searchStartMs;
+	static char ownAddresses[160];
+	static uint64_t ownAddressesMs;
 	XwaModernOptionsMenu menu;
 	NetPlayGameInfo games[6];
 	FrontendRect rect;
@@ -196,7 +208,11 @@ int XwaNetScreens_JoinGame(int frameCounter) {
 			XwaNet_DetachSession();
 		}
 		NetPlay_DiscoveryStart(0);
-		g_activeTextFieldId = NS_ADDRESS_FIELD_ID;
+		/* In the headset the address field waits for a click: its on-screen
+		 * keyboard would cover the list of games found. */
+		g_activeTextFieldId = Aeron_XrIsPresenting() ? 0 : NS_ADDRESS_FIELD_ID;
+		searchStartMs = SDL_GetTicks();
+		ownAddressesMs = 0;
 	}
 
 	if (connecting) {
@@ -232,7 +248,8 @@ int XwaNetScreens_JoinGame(int frameCounter) {
 	FrontendText_Draw(12, "Host address:", 150, 330, g_colorLightBlue);
 	FrontendDraw_RectAssign(&rect, 250, 328, 490, 344);
 	FrontendDraw_RectOutline(&rect, 0, 0, g_colorPaleBlue);
-	g_frontendEditFieldNoKeyboard = 0;
+	/* The keyboard comes up only while the field is being edited (clicked). */
+	g_frontendEditFieldNoKeyboard = g_activeTextFieldId != NS_ADDRESS_FIELD_ID;
 	fieldEnter =
 		FrontendText_DrawEditableField(&rect, g_gameConfig.ipAddress, 48, NS_ADDRESS_FIELD_ID, 12, NULL);
 	if (strcmp(lastProbe, g_gameConfig.ipAddress) != 0) {
@@ -241,27 +258,82 @@ int XwaNetScreens_JoinGame(int frameCounter) {
 	}
 
 	gameCount = NetPlay_DiscoveryList(games, 6);
+	{
+		/* One row per game: a host can answer on more than one address. */
+		int kept = 0;
+		for (int i = 0; i < gameCount; ++i) {
+			int duplicate = 0;
+			for (int j = 0; j < kept; ++j) {
+				if (games[j].port == games[i].port && strcmp(games[j].hostName, games[i].hostName) == 0 &&
+					strcmp(games[j].gameName, games[i].gameName) == 0) {
+					duplicate = 1;
+					break;
+				}
+			}
+			if (!duplicate) {
+				games[kept++] = games[i];
+			}
+		}
+		gameCount = kept;
+	}
 	XwaModernOptionsMenu_Begin(&menu, 320, 90, &cursorRow, gameCount + 2);
 	XwaModernOptionsMenu_DrawTitle(&menu, "Join a game");
 	menu.y += 6;
 	if (gameCount == 0) {
+		const uint64_t nowMs = SDL_GetTicks();
 		ns_draw_centered("Looking for games on your network...", menu.y + 10, 12, g_colorPaleBlue);
 		menu.y += 40;
+		if (nowMs - searchStartMs >= 5000) {
+			/* Nothing answered: say why that usually is, and what to type. */
+			if (!ownAddressesMs || nowMs - ownAddressesMs >= 2000) {
+				char addresses[128];
+				ownAddressesMs = nowMs;
+				if (NetPlay_GetLocalAddresses(addresses, (int)sizeof addresses) > 0) {
+					snprintf(ownAddresses, sizeof ownAddresses, "This machine: %s", addresses);
+				} else {
+					snprintf(ownAddresses, sizeof ownAddresses, "This machine has no network address.");
+				}
+			}
+			ns_draw_centered("No games found. Both devices must be on the same Wi-Fi", menu.y, 12, g_colorLightBlue);
+			snprintf(line, sizeof line, "(not a guest network) and the host must allow UDP port %d.",
+					 NETPLAY_DEFAULT_PORT);
+			ns_draw_centered(line, menu.y + 16, 12, g_colorLightBlue);
+			ns_draw_centered("Or type the host's address below.", menu.y + 32, 12, g_colorLightBlue);
+			ns_draw_centered(ownAddresses, menu.y + 56, 12, g_colorPaleBlue);
+			menu.y += 80;
+		}
 	}
 	for (int i = 0; i < gameCount; ++i) {
 		NetPlayGameInfo* g = &games[i];
 		int usable = g->open && g->compatible && g->players < g->maxPlayers;
 
-		snprintf(line, sizeof line, "%s  (%d/%d%s)  %u ms", g->gameName[0] ? g->gameName : g->hostName,
+		char version[32] = "";
+		if (g->version[0] && strcmp(g->version, OPENXWA_VERSION) != 0) {
+			snprintf(version, sizeof version, " v%s", g->version);
+		}
+		snprintf(line, sizeof line, "%s  (%d/%d%s%s)  %u ms", g->gameName[0] ? g->gameName : g->hostName,
 				 g->players, g->maxPlayers,
 				 !g->compatible ? ", other version"
 				 : !g->open     ? ", in progress"
 								: "",
-				 (unsigned)g->pingMs);
-		if (XwaModernOptionsMenu_DrawAction(&menu, line, 71 + i, !usable) && usable && !joinAddress) {
-			snprintf(target, sizeof target, "%s:%u", g->address, (unsigned)g->port);
-			joinAddress = target;
-			joinPort = g->port;
+				 version, (unsigned)g->pingMs);
+		{
+			/* The whole row is the button: a laser pointer in the headset
+			 * hits a short line of text poorly. */
+			FrontendRect rowRect;
+			int cursorX;
+			int cursorY;
+			int rowClicked;
+			FrontendDraw_RectAssign(&rowRect, 110, menu.y - 3, 530, menu.y + 17);
+			FrontendCursor_GetPos(&cursorX, &cursorY);
+			rowClicked = FrontendDraw_PointInRect(&rowRect, cursorX, cursorY) && FrontendMouse_GetLeftClick();
+			if ((XwaModernOptionsMenu_DrawAction(&menu, line, 71 + i, !usable) || rowClicked) && usable &&
+				!joinAddress) {
+				snprintf(target, sizeof target, "%s:%u", g->address, (unsigned)g->port);
+				joinAddress = target;
+				joinPort = g->port;
+				g_activeTextFieldId = 0; /* done with the address: the keyboard goes */
+			}
 		}
 	}
 	menu.y = menu.y < 300 ? 300 : menu.y;

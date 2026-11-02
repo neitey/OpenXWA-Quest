@@ -3,6 +3,7 @@
 #endif
 #include "xwa_runtime/net/netplay.h"
 #include <SDL3/SDL_stdinc.h>
+#include <SDL3/SDL_thread.h>
 
 #include "aeron/log.h"
 #include "aeron/sync.h"
@@ -43,17 +44,27 @@ typedef int NpSocket;
 
 #define NP_LOG "xwa.netplay"
 
+#ifndef OPENXWA_VERSION
+#define OPENXWA_VERSION "unknown"
+#endif
+
 /* Wire format. All integers little endian. Every datagram starts with
  * u32 magic, u8 protocol, u8 type, u16 zero. */
 #define NP_MAGIC 0x504E5758u /* "XWNP" */
 #define NP_PROTOCOL 1
+/* Bump when the flight simulation or the session messages change in a way
+ * older builds cannot follow (lockstep would desync). Hosts and clients that
+ * send no revision (earlier builds of this protocol) count as compatible. */
+#define NP_SIM_REVISION 3u /* 2: world checksum over the portable saved state; 3: rollback keeps the turned pose */
+#define NP_VERSION_LEN 16
 #define NP_HEADER 8
 #define NP_MTU 1232
 
 enum {
 	NP_DG_QUERY = 1, /* u32 nonce */
-	NP_DG_INFO = 2, /* u32 nonce, u16 port, u8 players, u8 max, u8 open, u8 0, char game[32], char host[16] */
-	NP_DG_HELLO = 3,   /* u32 nonce, char short[16], char long[16] */
+	NP_DG_INFO = 2, /* u32 nonce, u16 port, u8 players, u8 max, u8 open, u8 0, char game[32], char host[16],
+					   [u32 simRevision, char version[16]] */
+	NP_DG_HELLO = 3,   /* u32 nonce, char short[16], char long[16], [u32 simRevision, char version[16]] */
 	NP_DG_WELCOME = 4, /* u32 nonce, u32 token, i32 you, i32 host, i32 group, u16 epoch, u8 inFlight, u8 n,
 						  n * (i32 id, char short[16], char long[16]) */
 	NP_DG_REJECT = 5,  /* u32 nonce, u32 reason */
@@ -84,6 +95,8 @@ enum {
 #define NP_JOIN_TIMEOUT_MS 8000
 #define NP_DISCOVERY_INTERVAL_MS 1000
 #define NP_DISCOVERY_EXPIRE_MS 4000
+#define NP_IFACE_REFRESH_MS 5000
+#define NP_MAX_IFACES 16
 #define NP_MAX_GAMES 16
 #define NP_ACKED 0xffffffffu
 
@@ -154,6 +167,8 @@ typedef struct NpState {
 
 	int joinState;
 	char joinError[96];
+	int joinResolving;		  /* a host name is being looked up off the game thread */
+	uint32_t joinResolveGen; /* bumped per attempt: a late lookup of an old one is dropped */
 	struct sockaddr_in joinAddr;
 	uint32_t joinNonce;
 	uint32_t joinStartMs;
@@ -174,6 +189,9 @@ typedef struct NpState {
 	uint32_t discoveryLastMs;
 	struct sockaddr_in probeAddr;
 	int haveProbe;
+	struct in_addr ifaceBroadcast[NP_MAX_IFACES]; /* subnet broadcasts, refreshed now and then */
+	int ifaceCount;
+	uint32_t ifaceLastMs;
 	NetPlayGameInfo games[NP_MAX_GAMES];
 	int gameCount;
 
@@ -411,25 +429,23 @@ static void np_sendto(const struct sockaddr_in* to, const uint8_t* buf, int len)
 	sendto(g_np.sock, (const char*)buf, len, 0, (const struct sockaddr*)to, sizeof *to);
 }
 
-static int np_resolve(const char* text, uint16_t defaultPort, struct sockaddr_in* out) {
-	char host[128];
+/* "host", "host:port" -> host text and port; 0 when empty. */
+static int np_split_host(const char* text, uint16_t defaultPort, char* host, size_t hostSize, uint16_t* port) {
 	const char* colon;
-	uint16_t port = defaultPort;
-	struct addrinfo hints;
-	struct addrinfo* res = NULL;
 
+	*port = defaultPort;
 	if (!text) {
 		return 0;
 	}
 	while (*text == ' ') {
 		++text;
 	}
-	snprintf(host, sizeof host, "%s", text);
+	snprintf(host, hostSize, "%s", text);
 	colon = strrchr(host, ':');
 	if (colon) {
 		int p = atoi(colon + 1);
 		if (p > 0 && p < 65536) {
-			port = (uint16_t)p;
+			*port = (uint16_t)p;
 		}
 		host[colon - host] = '\0';
 	}
@@ -438,14 +454,24 @@ static int np_resolve(const char* text, uint16_t defaultPort, struct sockaddr_in
 		while (n > 0 && host[n - 1] == ' ') {
 			host[--n] = '\0';
 		}
-		if (n == 0) {
-			return 0;
-		}
+		return n > 0;
 	}
+}
+
+/* A dotted IPv4 address only: never asks the network. */
+static int np_resolve_numeric(const char* host, uint16_t port, struct sockaddr_in* out) {
 	memset(out, 0, sizeof *out);
 	out->sin_family = AF_INET;
 	out->sin_port = htons(port);
-	if (inet_pton(AF_INET, host, &out->sin_addr) == 1) {
+	return inet_pton(AF_INET, host, &out->sin_addr) == 1;
+}
+
+/* A host name: a DNS lookup that can take seconds. Never on the game thread. */
+static int np_lookup(const char* host, uint16_t port, struct sockaddr_in* out) {
+	struct addrinfo hints;
+	struct addrinfo* res = NULL;
+
+	if (np_resolve_numeric(host, port, out)) {
 		return 1;
 	}
 	memset(&hints, 0, sizeof hints);
@@ -939,6 +965,17 @@ static void np_handle_hello(const struct sockaddr_in* from, const uint8_t* p, in
 		return;
 	}
 	nonce = np_get32(p);
+	if (len >= 4 + 2 * NETPLAY_NAME_LEN + 4 && np_get32(p + 4 + 2 * NETPLAY_NAME_LEN) != NP_SIM_REVISION) {
+		char version[NP_VERSION_LEN] = "";
+		if (len >= 8 + 2 * NETPLAY_NAME_LEN + NP_VERSION_LEN) {
+			memcpy(version, p + 8 + 2 * NETPLAY_NAME_LEN, NP_VERSION_LEN);
+			version[NP_VERSION_LEN - 1] = 0;
+		}
+		Aeron_LogWarn(NP_LOG, "refused %s: other game version (%s, ours %s)", inet_ntoa(from->sin_addr),
+					  version[0] ? version : "?", OPENXWA_VERSION);
+		np_send_reject(from, nonce, NP_REJECT_VERSION);
+		return;
+	}
 	c = np_conn_by_addr(from);
 	if (c) {
 		if (c->helloNonce == nonce) {
@@ -1119,7 +1156,10 @@ static void np_handle_query(const struct sockaddr_in* from, const uint8_t* p, in
 	strncpy((char*)buf + n + 10, g_np.gameName, 31);
 	memcpy(buf + n + 42, g_np.local.shortName, NETPLAY_NAME_LEN);
 	buf[n + 42 + NETPLAY_NAME_LEN - 1] = 0;
-	np_sendto(from, buf, n + 42 + NETPLAY_NAME_LEN);
+	np_put32(buf + n + 42 + NETPLAY_NAME_LEN, NP_SIM_REVISION);
+	memset(buf + n + 46 + NETPLAY_NAME_LEN, 0, NP_VERSION_LEN);
+	strncpy((char*)buf + n + 46 + NETPLAY_NAME_LEN, OPENXWA_VERSION, NP_VERSION_LEN - 1);
+	np_sendto(from, buf, n + 46 + NETPLAY_NAME_LEN + NP_VERSION_LEN);
 }
 
 static void np_handle_info(const struct sockaddr_in* from, const uint8_t* p, int len, int protocol) {
@@ -1156,6 +1196,14 @@ static void np_handle_info(const struct sockaddr_in* from, const uint8_t* p, int
 	memcpy(g->hostName, p + 42, NETPLAY_NAME_LEN);
 	g->hostName[NETPLAY_NAME_LEN - 1] = 0;
 	g->compatible = protocol == NP_PROTOCOL;
+	g->version[0] = 0;
+	if (len >= 46 + NETPLAY_NAME_LEN + NP_VERSION_LEN) {
+		if (np_get32(p + 42 + NETPLAY_NAME_LEN) != NP_SIM_REVISION) {
+			g->compatible = 0;
+		}
+		memcpy(g->version, p + 46 + NETPLAY_NAME_LEN, NP_VERSION_LEN);
+		g->version[NP_VERSION_LEN - 1] = 0;
+	}
 	g->pingMs = now - np_get32(p);
 	g->lastSeenMs = now;
 }
@@ -1332,6 +1380,43 @@ static void np_flush_conn(NpConn* c, uint32_t now) {
 	}
 }
 
+/* The subnet broadcast address of every IPv4 network that is up. */
+static void np_refresh_ifaces(void) {
+	g_np.ifaceCount = 0;
+#ifdef _WIN32
+	{
+		INTERFACE_INFO list[NP_MAX_IFACES];
+		DWORD bytes = 0;
+		if (g_np.sock == NP_INVALID_SOCKET ||
+			WSAIoctl(g_np.sock, SIO_GET_INTERFACE_LIST, NULL, 0, list, sizeof list, &bytes, NULL, NULL) != 0) {
+			return;
+		}
+		for (DWORD i = 0; i < bytes / sizeof list[0] && g_np.ifaceCount < NP_MAX_IFACES; ++i) {
+			const u_long flags = list[i].iiFlags;
+			if ((flags & IFF_UP) && (flags & IFF_BROADCAST) && !(flags & IFF_LOOPBACK)) {
+				const u_long addr = list[i].iiAddress.AddressIn.sin_addr.s_addr;
+				const u_long mask = list[i].iiNetmask.AddressIn.sin_addr.s_addr;
+				g_np.ifaceBroadcast[g_np.ifaceCount++].s_addr = addr | ~mask;
+			}
+		}
+	}
+#else
+	{
+		struct ifaddrs* ifs = NULL;
+		if (getifaddrs(&ifs) != 0) {
+			return;
+		}
+		for (struct ifaddrs* it = ifs; it && g_np.ifaceCount < NP_MAX_IFACES; it = it->ifa_next) {
+			if (it->ifa_addr && it->ifa_addr->sa_family == AF_INET && (it->ifa_flags & IFF_BROADCAST) &&
+				(it->ifa_flags & IFF_UP) && !(it->ifa_flags & IFF_LOOPBACK) && it->ifa_broadaddr) {
+				g_np.ifaceBroadcast[g_np.ifaceCount++] = ((struct sockaddr_in*)it->ifa_broadaddr)->sin_addr;
+			}
+		}
+		freeifaddrs(ifs);
+	}
+#endif
+}
+
 static void np_tick(uint32_t now) {
 	if (g_np.mode == NP_MODE_HOST || g_np.mode == NP_MODE_CLIENT) {
 		for (int i = 0; i < NETPLAY_MAX_PLAYERS; ++i) {
@@ -1356,14 +1441,19 @@ static void np_tick(uint32_t now) {
 	if (g_np.joinState == NETPLAY_JOIN_PENDING) {
 		if (now - g_np.joinStartMs > NP_JOIN_TIMEOUT_MS) {
 			g_np.joinState = NETPLAY_JOIN_FAILED;
-			snprintf(g_np.joinError, sizeof g_np.joinError, "No answer from the host.");
-		} else if (now - g_np.joinLastHelloMs >= NP_HELLO_INTERVAL_MS) {
-			uint8_t buf[64];
+			snprintf(g_np.joinError, sizeof g_np.joinError,
+					 g_np.joinResolving ? "Could not find that host name." : "No answer from the host.");
+			g_np.joinResolving = 0;
+		} else if (!g_np.joinResolving && now - g_np.joinLastHelloMs >= NP_HELLO_INTERVAL_MS) {
+			uint8_t buf[96];
 			int n = np_header(buf, NP_DG_HELLO);
 			np_put32(buf + n, g_np.joinNonce);
 			memcpy(buf + n + 4, g_np.local.shortName, NETPLAY_NAME_LEN);
 			memcpy(buf + n + 4 + NETPLAY_NAME_LEN, g_np.local.longName, NETPLAY_NAME_LEN);
-			np_sendto(&g_np.joinAddr, buf, n + 4 + 2 * NETPLAY_NAME_LEN);
+			np_put32(buf + n + 4 + 2 * NETPLAY_NAME_LEN, NP_SIM_REVISION);
+			memset(buf + n + 8 + 2 * NETPLAY_NAME_LEN, 0, NP_VERSION_LEN);
+			strncpy((char*)buf + n + 8 + 2 * NETPLAY_NAME_LEN, OPENXWA_VERSION, NP_VERSION_LEN - 1);
+			np_sendto(&g_np.joinAddr, buf, n + 8 + 2 * NETPLAY_NAME_LEN + NP_VERSION_LEN);
 			g_np.joinLastHelloMs = now;
 		}
 	}
@@ -1378,21 +1468,16 @@ static void np_tick(uint32_t now) {
 		to.sin_port = htons(g_np.discoveryPort);
 		to.sin_addr.s_addr = htonl(INADDR_BROADCAST);
 		np_sendto(&to, buf, n);
-#ifndef _WIN32
-		{
-			struct ifaddrs* ifs = NULL;
-			if (getifaddrs(&ifs) == 0) {
-				for (struct ifaddrs* it = ifs; it; it = it->ifa_next) {
-					if (it->ifa_addr && it->ifa_addr->sa_family == AF_INET &&
-						(it->ifa_flags & IFF_BROADCAST) && (it->ifa_flags & IFF_UP) && it->ifa_broadaddr) {
-						to.sin_addr = ((struct sockaddr_in*)it->ifa_broadaddr)->sin_addr;
-						np_sendto(&to, buf, n);
-					}
-				}
-				freeifaddrs(ifs);
-			}
+		/* and each network's own broadcast address: with several adapters
+		 * (VPN, WSL, virtual machines) the one above may leave by the wrong one */
+		if (!g_np.ifaceLastMs || now - g_np.ifaceLastMs >= NP_IFACE_REFRESH_MS) {
+			np_refresh_ifaces();
+			g_np.ifaceLastMs = now;
 		}
-#endif
+		for (int i = 0; i < g_np.ifaceCount; ++i) {
+			to.sin_addr = g_np.ifaceBroadcast[i];
+			np_sendto(&to, buf, n);
+		}
 		/* the local machine too: a host in another window or on loopback */
 		to.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 		np_sendto(&to, buf, n);
@@ -1557,16 +1642,52 @@ int NetPlay_Host(const char* gameName, const char* shortName, const char* longNa
 	return 1;
 }
 
+typedef struct NpResolveJob {
+	char host[128];
+	uint16_t port;
+	uint32_t gen;
+} NpResolveJob;
+
+/* Looks a host name up off the game thread; the result lands only if the
+ * same join attempt is still waiting for it. */
+static int SDLCALL np_resolve_thread(void* user) {
+	NpResolveJob* job = (NpResolveJob*)user;
+	struct sockaddr_in addr;
+	const int ok = np_lookup(job->host, job->port, &addr);
+
+	np_lock();
+	if (g_np.joinResolving && g_np.joinResolveGen == job->gen && g_np.joinState == NETPLAY_JOIN_PENDING) {
+		g_np.joinResolving = 0;
+		if (ok) {
+			g_np.joinAddr = addr;
+			g_np.joinStartMs = np_now_ms();
+			g_np.joinLastHelloMs = 0;
+			Aeron_LogInfo(NP_LOG, "%s is %s", job->host, inet_ntoa(addr.sin_addr));
+		} else {
+			g_np.joinState = NETPLAY_JOIN_FAILED;
+			snprintf(g_np.joinError, sizeof g_np.joinError, "Unknown host address.");
+		}
+	}
+	np_unlock();
+	free(job);
+	return 0;
+}
+
 int NetPlay_JoinBegin(const char* address, uint16_t port, const char* shortName, const char* longName) {
 	struct sockaddr_in addr;
+	char host[128];
+	uint16_t hostPort;
+	int numeric;
+	uint32_t gen;
 
-	if (!np_resolve(address, port ? port : NETPLAY_DEFAULT_PORT, &addr)) {
+	if (!np_split_host(address, port ? port : NETPLAY_DEFAULT_PORT, host, sizeof host, &hostPort)) {
 		np_lock();
 		g_np.joinState = NETPLAY_JOIN_FAILED;
 		snprintf(g_np.joinError, sizeof g_np.joinError, "Unknown host address.");
 		np_unlock();
 		return 0;
 	}
+	numeric = np_resolve_numeric(host, hostPort, &addr);
 	np_lock();
 	if (g_np.mode == NP_MODE_HOST || g_np.mode == NP_MODE_CLIENT) {
 		np_unlock();
@@ -1582,13 +1703,42 @@ int NetPlay_JoinBegin(const char* address, uint16_t port, const char* shortName,
 	memset(&g_np.local, 0, sizeof g_np.local);
 	np_copy_name(g_np.local.shortName, shortName);
 	np_copy_name(g_np.local.longName, longName);
-	g_np.joinAddr = addr;
+	if (numeric) {
+		g_np.joinAddr = addr;
+	} else {
+		memset(&g_np.joinAddr, 0, sizeof g_np.joinAddr);
+	}
+	g_np.joinResolving = !numeric;
+	gen = ++g_np.joinResolveGen;
 	g_np.joinNonce = np_random() | 1u;
 	g_np.joinStartMs = np_now_ms();
 	g_np.joinLastHelloMs = 0;
 	g_np.joinError[0] = 0;
 	g_np.joinState = NETPLAY_JOIN_PENDING;
 	np_unlock();
+
+	if (!numeric) {
+		NpResolveJob* job = (NpResolveJob*)calloc(1, sizeof *job);
+		SDL_Thread* thread = NULL;
+		if (job) {
+			snprintf(job->host, sizeof job->host, "%s", host);
+			job->port = hostPort;
+			job->gen = gen;
+			thread = SDL_CreateThread(np_resolve_thread, "xwa-netplay-dns", job);
+		}
+		if (!thread) {
+			free(job);
+			np_lock();
+			if (g_np.joinResolveGen == gen) {
+				g_np.joinResolving = 0;
+				g_np.joinState = NETPLAY_JOIN_FAILED;
+				snprintf(g_np.joinError, sizeof g_np.joinError, "Could not look the host name up.");
+			}
+			np_unlock();
+			return 0;
+		}
+		SDL_DetachThread(thread);
+	}
 	return 1;
 }
 
@@ -1626,6 +1776,12 @@ void NetPlay_Shutdown(void) {
 		NetPlay_SleepMs(10);
 	}
 	np_lock();
+	if (g_np.joinResolving) {
+		/* nobody to tell yet; a late lookup result is dropped */
+		g_np.joinResolving = 0;
+		++g_np.joinResolveGen;
+		g_np.joinNonce = 0;
+	}
 	if (g_np.joinState == NETPLAY_JOIN_PENDING || (g_np.joinState == NETPLAY_JOIN_FAILED && g_np.joinNonce)) {
 		/* A welcome may be on its way; tell the host not to keep the seat. */
 		uint8_t buf[16];
@@ -1939,7 +2095,14 @@ int NetPlay_DiscoveryStart(uint16_t port) {
 
 void NetPlay_DiscoveryProbe(const char* address) {
 	struct sockaddr_in addr;
-	int ok = address && address[0] && np_resolve(address, NETPLAY_DEFAULT_PORT, &addr);
+	char host[128];
+	uint16_t port;
+	/* Called as the address is typed: only a complete numeric address is
+	 * probed. A partial one ("192.168.") or a host name would go to DNS,
+	 * which can take seconds and froze the screen; host names are looked up
+	 * when Connect is pressed, off the game thread. */
+	int ok = np_split_host(address, NETPLAY_DEFAULT_PORT, host, sizeof host, &port) &&
+			 np_resolve_numeric(host, port, &addr);
 
 	np_lock();
 	g_np.haveProbe = ok;

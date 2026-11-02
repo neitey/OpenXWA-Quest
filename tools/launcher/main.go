@@ -28,6 +28,7 @@ const (
 )
 
 const (
+	appName        = "OpenXWA" // technical (folder names), not shown to players
 	appPackage     = "org.openxwa.quest"
 	appActivity    = "org.openxwa.quest/org.openxwa.quest.OpenXwaActivity"
 	defaultStorage = "/sdcard"
@@ -70,7 +71,8 @@ func usage() string {
 	return launcherName + ` ` + version + `
 
 Puts ` + productName + ` (based on OpenXWA) and your own X-Wing Alliance
-game files on your VR headset (Meta Quest, Pico, Steam Frame) over a USB cable.
+game files on your VR headset (Meta Quest, Pico, Steam Frame) over a USB
+cable or Wi-Fi.
 
 Usage:
   OpenXWA-VR-Launcher [options] [game folder]
@@ -118,6 +120,9 @@ func parseArgs(args []string) (options, error) {
 }
 
 func main() {
+	if runAskpass() { // started by ssh as SSH_ASKPASS (see sshtunnel.go)
+		return
+	}
 	opts, err := parseArgs(os.Args[1:])
 	if err != nil || opts.help || opts.showVersion {
 		setupConsole() // the Windows build has no console of its own
@@ -202,6 +207,7 @@ type app struct {
 	storage     string // "/sdcard" or a fallback such as "/storage/emulated/0"
 	logsDir     string // last folder logs were collected into
 	uid         int    // the app's Linux uid on the headset (0 = not known yet)
+	appOwner    *owner // owner shown for a folder the app made itself (nil = not seen yet)
 	mkdirOK     bool   // folders made with mkdir belong to the app on this headset
 	helper      bool   // the app's helper (SetupProvider) copies the files
 	helperTried bool
@@ -212,6 +218,12 @@ type app struct {
 	lepton      string // its serial, e.g. "localhost:5555" or "frame:5555"
 	frameUSB    string // the SteamOS USB serial
 	forwardPort int    // port forwarded over USB (0 = none)
+
+	// Wi-Fi (wifi.go, sshtunnel.go).
+	route   string        // usb, usbwifi or wifi (the connection step's choice)
+	netHost string        // the headset's name or IP address over Wi-Fi
+	tunnel  *sshTunnel    // Steam Frame through SSH (nil = none)
+	lib     *frameLibrary // Steam Frame as a Steam Library game (steamlib.go); nil = the adb routes
 }
 
 func newApp() *app {
@@ -241,6 +253,17 @@ func (a *app) run(opts options) int {
 	}
 }
 
+// either picks the Steam Library route's step (a.lib set by connect) or
+// the adb one.
+func (a *app) either(frame, adb func() error) func() error {
+	return func() error {
+		if a.lib != nil {
+			return frame()
+		}
+		return adb()
+	}
+}
+
 type step struct {
 	title string
 	run   func() error
@@ -264,10 +287,10 @@ func (a *app) flow(opts options) error {
 		}},
 		{"Finding your X-Wing Alliance folder", func() error { return a.chooseGame(opts.gameArg) }},
 		{"Connecting to the headset", a.connect},
-		{"Installing the app", a.installApp},
-		{"Preparing the game folder on the headset", a.prepareAppFolder},
-		{"Pilots", a.copyPilots},
-		{"Copying the game files", a.copyGame},
+		{"Installing the app", a.either(a.frameInstall, a.installApp)},
+		{"Preparing the game folder on the headset", a.either(func() error { return nil }, a.prepareAppFolder)},
+		{"Pilots", a.either(a.frameCopyPilots, a.copyPilots)},
+		{"Copying the game files", a.either(a.frameCopyGame, a.copyGame)},
 		{"Done", func() error { a.doneMenu(true); return nil }},
 	}
 	if !opts.noUpdate {

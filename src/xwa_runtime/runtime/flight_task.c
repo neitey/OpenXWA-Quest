@@ -5,6 +5,8 @@
 #include "xwa/flight/hangar.h"
 
 #include "aeron/aeron.h"
+#include "aeron/time.h"
+#include "xwa_runtime/snapshot/snapshot_present.h"
 #include "xwa/assets/file_io.h"
 #include "xwa/assets/flight_model.h"
 #include "xwa/assets/string_table.h"
@@ -1086,7 +1088,116 @@ static int XwaFlightTask_RunMultiplayerAheadRecovery(void) {
 	return 0;
 }
 
+/* ---- multiplayer timing log ---------------------------------------------
+ * Once a second while flying with others: how the simulation advanced and
+ * what the network wait and the rollbacks cost, for openxwa.log (a tester
+ * can send it back). XWA_MP_TIMING_LOG=0 turns it off. */
+static struct {
+	uint64_t windowStartUs;
+	uint32_t frames;
+	uint32_t stepFrames;
+	uint32_t rollbacks;
+	uint32_t framesSinceStep;
+	uint32_t maxFramesWithoutStep;
+	uint64_t maxPacketUs;
+	uint64_t maxStepUs;
+	uint64_t maxFrameUs;
+	int minLead;
+	int maxLead;
+	int stepTicksMin;
+	int stepTicksMax;
+	uint64_t packetUs;
+	uint64_t stepUs;
+	int rolledBack;
+	int stepped;
+	int stepTicks;
+} g_xwaMpTiming;
+
+static int XwaFlightTask_MpTimingLogEnabled(void) {
+	static int enabled = -1;
+	if (enabled < 0) {
+		const char* env = SDL_getenv("XWA_MP_TIMING_LOG");
+		enabled = !(env && env[0] == '0');
+	}
+	return enabled;
+}
+
+static void XwaFlightTask_MpTimingFrame(uint64_t frameUs) {
+	uint64_t now = Aeron_NowUs();
+	const int lead = g_inputTimestamp - g_serverTickTime;
+
+	if (!XwaFlightTask_MpTimingLogEnabled()) {
+		return;
+	}
+	if (g_xwaMpTiming.windowStartUs == 0) {
+		g_xwaMpTiming.windowStartUs = now;
+		g_xwaMpTiming.minLead = g_xwaMpTiming.maxLead = lead;
+		g_xwaMpTiming.stepTicksMin = 0x7fffffff;
+		g_xwaMpTiming.stepTicksMax = 0;
+	}
+	g_xwaMpTiming.frames++;
+	if (g_xwaMpTiming.stepped) {
+		g_xwaMpTiming.stepFrames++;
+		g_xwaMpTiming.framesSinceStep = 0;
+		if (g_xwaMpTiming.stepTicks < g_xwaMpTiming.stepTicksMin) {
+			g_xwaMpTiming.stepTicksMin = g_xwaMpTiming.stepTicks;
+		}
+		if (g_xwaMpTiming.stepTicks > g_xwaMpTiming.stepTicksMax) {
+			g_xwaMpTiming.stepTicksMax = g_xwaMpTiming.stepTicks;
+		}
+	} else if (++g_xwaMpTiming.framesSinceStep > g_xwaMpTiming.maxFramesWithoutStep) {
+		g_xwaMpTiming.maxFramesWithoutStep = g_xwaMpTiming.framesSinceStep;
+	}
+	g_xwaMpTiming.rollbacks += (uint32_t)g_xwaMpTiming.rolledBack;
+	if (g_xwaMpTiming.packetUs > g_xwaMpTiming.maxPacketUs) {
+		g_xwaMpTiming.maxPacketUs = g_xwaMpTiming.packetUs;
+	}
+	if (g_xwaMpTiming.stepUs > g_xwaMpTiming.maxStepUs) {
+		g_xwaMpTiming.maxStepUs = g_xwaMpTiming.stepUs;
+	}
+	if (frameUs > g_xwaMpTiming.maxFrameUs) {
+		g_xwaMpTiming.maxFrameUs = frameUs;
+	}
+	if (lead < g_xwaMpTiming.minLead) {
+		g_xwaMpTiming.minLead = lead;
+	}
+	if (lead > g_xwaMpTiming.maxLead) {
+		g_xwaMpTiming.maxLead = lead;
+	}
+	g_xwaMpTiming.rolledBack = 0;
+	g_xwaMpTiming.stepped = 0;
+	g_xwaMpTiming.packetUs = 0;
+	g_xwaMpTiming.stepUs = 0;
+
+	if (now - g_xwaMpTiming.windowStartUs >= 1000000u) {
+		XwaSnapshotPresentStats present;
+		XwaSnapshotPresent_TakeStats(&present);
+		Aeron_LogInfo("xwa.mp",
+					  "timing: %u frames, %u with a step (%d-%d ticks), longest wait %u frames; %u world "
+					  "messages (rollback max %.1f ms), step max %.1f ms, sim frame max %.1f ms; lead %d..%d "
+					  "ticks (allowance %d) | shown %.1f ticks behind, longest step gap %.1f ticks, held %u",
+					  g_xwaMpTiming.frames, g_xwaMpTiming.stepFrames,
+					  g_xwaMpTiming.stepFrames ? g_xwaMpTiming.stepTicksMin : 0, g_xwaMpTiming.stepTicksMax,
+					  g_xwaMpTiming.maxFramesWithoutStep, g_xwaMpTiming.rollbacks,
+					  (double)g_xwaMpTiming.maxPacketUs / 1000.0, (double)g_xwaMpTiming.maxStepUs / 1000.0,
+					  (double)g_xwaMpTiming.maxFrameUs / 1000.0, g_xwaMpTiming.minLead, g_xwaMpTiming.maxLead,
+					  g_flightNetClockLeadAllowanceMs,
+					  present.frames ? present.lag_ticks_sum / present.frames : 0.0, present.max_gap_ticks,
+					  present.held_frames);
+		memset(&g_xwaMpTiming, 0, sizeof g_xwaMpTiming);
+	}
+}
+
+static int XwaFlightTask_RunMultiplayerFrameBody(void);
+
 static int XwaFlightTask_RunMultiplayerFrame(void) {
+	const uint64_t start = Aeron_NowUs();
+	const int result = XwaFlightTask_RunMultiplayerFrameBody();
+	XwaFlightTask_MpTimingFrame(Aeron_NowUs() - start);
+	return result;
+}
+
+static int XwaFlightTask_RunMultiplayerFrameBody(void) {
 	int targetTimestamp;
 	int realInputTimestamp;
 	int serverLeadTarget;
@@ -1100,8 +1211,18 @@ static int XwaFlightTask_RunMultiplayerFrame(void) {
 		return 1;
 	}
 	timing.preStepTimestamp = g_inputTimestamp;
-	FlightNet_ProcessIncomingPackets();
-	if (!NetSession_GetLocalPlayerId() && g_flightNetHostTimeoutElapsedMs > 7080) {
+	{
+		const int serverTickBefore = g_serverTickTime;
+		const uint64_t packetStart = Aeron_NowUs();
+		FlightNet_ProcessIncomingPackets();
+		g_xwaMpTiming.packetUs = Aeron_NowUs() - packetStart;
+		g_xwaMpTiming.rolledBack = g_serverTickTime != serverTickBefore;
+	}
+	if (!NetSession_GetLocalPlayerId() &&
+		(g_flightNetHostTimeoutElapsedMs > 7080 ||
+		 (g_flightNetLocalLeaveTimestamp && g_inputTimestamp - g_flightNetLocalLeaveTimestamp > 250))) {
+		/* The host went silent, or this player left the game (a second
+		 * after confirming, for the key to reach the host). */
 		int localPlayer;
 
 		localPlayer = g_localPlayer;
@@ -1188,7 +1309,13 @@ static int XwaFlightTask_RunMultiplayerFrame(void) {
 	FlightNet_SampleAndSendInput();
 	FlightSync_QueuePredictedRemoteInputFrames(g_xwaFlightTaskPredictedFrameDelta);
 	g_flightSimSideEffectsSuppressed = 1;
-	Flight_StepSimToTime(g_inputTimestamp);
+	{
+		const uint64_t stepStart = Aeron_NowUs();
+		g_xwaMpTiming.stepTicks = g_inputTimestamp - g_gameTime;
+		Flight_StepSimToTime(g_inputTimestamp);
+		g_xwaMpTiming.stepUs = Aeron_NowUs() - stepStart;
+		g_xwaMpTiming.stepped = 1;
+	}
 	XwaFlightTask_EnterRequestedHangarReady(XWA_FLIGHT_TASK_HANGAR_CONTINUE_FLIGHT);
 	if (g_inHangarReady) {
 		XwaFlightTask_UpdateHangarFromFlightFrame(g_inputTimestamp - g_gameTime);

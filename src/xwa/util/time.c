@@ -1,4 +1,7 @@
 #include "xwa/util/time.h"
+#ifdef XWA_MODERN
+#include "xwa_runtime/timing/host_clock.h"
+#endif
 
 // GLOBAL: XWA 0x8B94D4
 int g_gameTime;
@@ -36,6 +39,9 @@ uint32_t Time_GetFrameDelta(void) {
 	uint32_t lastTickTime;
 	uint32_t deltaTicks;
 
+#ifdef XWA_MODERN
+	XwaTime_NoteFrameDeltaPoll();
+#endif
 	time = timeGetTime();
 	lastTickTime = g_lastTickTime;
 	if (lastTickTime == 0) {

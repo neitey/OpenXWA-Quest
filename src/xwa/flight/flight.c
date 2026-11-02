@@ -3784,6 +3784,48 @@ int Flight_ChecksumWorldState(int expectedChecksum, int serverTicks) {
 	uint16_t randSeed;
 	int finalSegmentSize;
 
+#ifdef XWA_MODERN
+	/* The classic walk below steps through the world state with the
+	 * original 32-bit record layout (mobj pointer at +35, 229-byte mobj with
+	 * its links at +217/+221/+225). Flight_SaveWorldState writes the portable
+	 * layout instead (mobj link at +12, links at +138/+142/+146), so the walk
+	 * lost its place after the first object and summed bytes past the saved
+	 * state: memory that differs between two machines. Every checksum epoch
+	 * then reported a mismatch although both players' saved states were
+	 * byte-identical (multiplayer dumps from a Quest 3 and a Quest 2), and
+	 * the host resent the world every ~2 s. The saved state is deterministic
+	 * and fully portable, so the modern build checksums exactly its bytes:
+	 * sixteen equal parts, FNV-1a each. */
+	{
+		uint32_t total = 0;
+		const int size = g_worldStateSize > 0 ? g_worldStateSize : 0;
+		(void)expectedChecksum;
+		(void)serverTicks;
+		(void)cursor;
+		(void)segmentStart;
+		(void)segmentThreshold;
+		(void)segmentIndex;
+		(void)sectionChecksum;
+		(void)totalChecksum;
+		(void)calculatedChecksum;
+		(void)slot;
+		(void)byteCount;
+		(void)randSeed;
+		(void)finalSegmentSize;
+		for (int part = 0; part < 16; ++part) {
+			const int begin = (int)((int64_t)size * part / 16);
+			const int end = (int)((int64_t)size * (part + 1) / 16);
+			uint32_t hash = 2166136261u;
+			for (int i = begin; i < end; ++i) {
+				hash = (hash ^ g_worldStateBuffer[i]) * 16777619u;
+			}
+			g_worldChecksum[part] = hash;
+			peerChecksum[part] = (uint32_t)(end - begin);
+			total += hash;
+		}
+		return (int)total;
+	}
+#endif
 	segmentThreshold = g_worldStateSize >> 4;
 	cursor = g_worldStateBuffer;
 	totalChecksum = 0;
@@ -6452,6 +6494,26 @@ void Flight_AdvanceOneStep(int targetTimestamp) {
 				ComputeHardpointWorldPos(selectedPlayer);
 			}
 
+#ifdef XWA_MODERN
+			/* Port fix: the pose a later, older-than-the-world frame rewinds to
+			 * (the checkpoint branch above) was saved after the craft moved to
+			 * this frame but before this frame's stick input turned it. Every
+			 * rewind then dropped one input frame of turning: in multiplayer,
+			 * whenever a world message reached past the player's newest input
+			 * (the host, whose lead is small), the own craft's turn and roll
+			 * jumped back at each rollback. Save the turned orientation. */
+			{
+				const int checkpointObject = g_players[selectedPlayer].objectIndex;
+				if (checkpointObject != 0xffff && g_players[selectedPlayer].regionIndex != g_hangarSceneRegionIdx &&
+					g_objectTable[checkpointObject].mobj != NULL &&
+					g_objectTable[checkpointObject].mobj->simStateTimestamp == frame->timestamp &&
+					g_objectTable[checkpointObject].objectSignature == (uint16_t)g_players[selectedPlayer].savedFieldId) {
+					g_players[selectedPlayer].savedRoll = (int16_t)g_objectTable[checkpointObject].roll;
+					g_players[selectedPlayer].savedPitch = (int16_t)g_objectTable[checkpointObject].pitch;
+					g_players[selectedPlayer].savedYaw = (int16_t)g_objectTable[checkpointObject].yaw;
+				}
+			}
+#endif
 			g_gameTime = savedGameTime;
 			g_flightSfxSideEffectGate = 0;
 			g_elapsedTicks = savedElapsedTicks;
@@ -7621,6 +7683,24 @@ static __inline int FlightAction_WarheadMessageBase(uint16_t warheadTypeId, unsi
 	}
 }
 
+#ifdef XWA_MODERN
+/* OpenXWA: "target incoming" picks only real warheads (what a launcher fires:
+ * g_warheadTypeIds - missiles, torpedoes, rockets, bombs, mag / ion pulse),
+ * not the guided laser / ion bolts capital ships fire (WarheadLaser1..3,
+ * WarheadIon), and only ones homing on this player - the original also fell
+ * back to warheads aimed at friendly craft. */
+static __inline int FlightAction_IsLauncherWarhead(uint16_t objectType) {
+	size_t i;
+
+	for (i = 1; i < sizeof g_warheadTypeIds / sizeof g_warheadTypeIds[0]; ++i) {
+		if (g_warheadTypeIds[i] == objectType) {
+			return 1;
+		}
+	}
+	return 0;
+}
+#endif
+
 static __inline uint16_t FlightAction_FindIncomingWarheadTarget(unsigned int playerIdx) {
 	uint32_t objIdx;
 	uint32_t bestDistance = UINT32_MAX;
@@ -7635,6 +7715,11 @@ static __inline uint16_t FlightAction_FindIncomingWarheadTarget(unsigned int pla
 			obj->mobj->pWarheadGuidance == NULL) {
 			continue;
 		}
+#ifdef XWA_MODERN
+		if (!FlightAction_IsLauncherWarhead(obj->objectType)) {
+			continue;
+		}
+#endif
 
 		if (obj->mobj->pWarheadGuidance->targetObjIdx == (uint16_t)g_players[playerIdx].objectIndex) {
 			pai_ObjectRefDirectionToObjectRef((unsigned int)g_players[playerIdx].objectIndex, objIdx);
@@ -7648,6 +7733,9 @@ static __inline uint16_t FlightAction_FindIncomingWarheadTarget(unsigned int pla
 	if (bestObjIdx != 0xffffu) {
 		return bestObjIdx;
 	}
+#ifdef XWA_MODERN
+	return 0xffffu;
+#endif
 
 	for (objIdx = g_projectileObjectSlotStart; objIdx < g_projectileObjectSlotEnd; ++objIdx) {
 		uint16_t targetObjIdx;

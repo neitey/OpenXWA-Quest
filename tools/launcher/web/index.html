@@ -92,8 +92,8 @@ h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: 0.01em; }
 .problem { margin-top: 10px; color: var(--red); white-space: pre-wrap; font-size: 13px; }
 .link { display: inline-block; margin-top: 6px; color: var(--cyan); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 .field { display: flex; gap: 8px; margin-top: 12px; }
-input[type=text] { flex: 1; min-width: 0; background: rgba(0,0,0,0.35); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 9px 11px; font: 13px var(--mono); }
-input[type=text]:focus { outline: none; border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(56,216,255,0.15); }
+input[type=text], input[type=password] { flex: 1; min-width: 0; background: rgba(0,0,0,0.35); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 9px 11px; font: 13px var(--mono); }
+input[type=text]:focus, input[type=password]:focus { outline: none; border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(56,216,255,0.15); }
 .buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .buttons.choices { flex-direction: column; align-items: stretch; }
 .buttons.choices button { text-align: left; font-family: var(--mono); font-size: 12px; font-weight: 500; }
@@ -213,7 +213,8 @@ function card(q, isOffer) {
   if (q.kind === "text") {
     const f = el("div", "field");
     input = el("input");
-    input.type = "text";
+    input.type = q.secret ? "password" : "text";
+    if (q.secret) input.autocomplete = "off";
     input.value = q.value || "";
     input.placeholder = q.placeholder || "";
     input.spellcheck = false;

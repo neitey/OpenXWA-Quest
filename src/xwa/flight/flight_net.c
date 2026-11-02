@@ -16,7 +16,11 @@
 
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#ifdef XWA_MODERN
+#include <SDL3/SDL_stdinc.h>
+#endif
 
 // GLOBAL: XWA 0x770E7C
 int dpid;
@@ -1182,6 +1186,18 @@ int FlightNet_WaitForMissionStart(void) {
 			g_gameTime = 0;
 			g_inputTimestamp = 0;
 			g_flightNetClockLeadAllowanceMs = g_asyncFlag != 0 ? 130 : 30;
+#ifdef XWA_MODERN
+			g_flightNetLocalLeaveTimestamp = 0;
+			{
+				/* How far (sim ticks) a player may run ahead of the last world
+				 * message: XWA_NET_LEAD_TICKS in openxwa-quest.cfg, to try
+				 * more prediction against network waits. */
+				const char* lead = SDL_getenv("XWA_NET_LEAD_TICKS");
+				if (lead && atoi(lead) >= 8 && atoi(lead) <= 400) {
+					g_flightNetClockLeadAllowanceMs = atoi(lead);
+				}
+			}
+#endif
 			switch (g_gameConfig.serverUpdateRate) {
 				case 4:
 					dtMs = 59;
@@ -1848,6 +1864,10 @@ int FlightNet_WaitForWorldStateChunkAcks(int directPlayId, int chunkCount) {
 	return 0;
 }
 
+#ifdef XWA_MODERN
+int g_flightNetLocalLeaveTimestamp;
+#endif
+
 // FUNCTION: XWA 0x4ED7F0
 int FlightNet_SampleAndSendInput(void) {
 	int playerIdx;
@@ -1864,6 +1884,31 @@ int FlightNet_SampleAndSendInput(void) {
 	FlightInput_Read(-2);
 
 	g_currentInputFrame.key = g_actionKey;
+#ifdef XWA_MODERN
+	if (g_flightPlayerCount > 1 && g_actionKey == KEY_ESCAPE) {
+		/* Port: the options menu pauses the game, so a network game has
+		 * none, and its ways out (Q to end your flight, then Alt+Q to leave
+		 * the game, each confirmed with Space) have no buttons in the
+		 * headset. Escape (the menu button) asks the next of those
+		 * questions, and confirms the one on screen. Sent as those keys,
+		 * so every player's simulation sees the same thing. */
+		const PlayerData* local = &g_players[g_localPlayer];
+		if (local->pendingActionId == 2 && local->pendingActionParam == -1 && local->pendingActionTimer > 0) {
+			g_currentInputFrame.key = KEY_SPACE;
+			if (local->connectedFlag != 1 && g_flightNetLocalLeaveTimestamp == 0) {
+				/* Leaving the game: the host takes this player out on this
+				 * key and sends it no more world messages, so a client goes
+				 * on its own shortly (XwaFlightTask) instead of waiting out
+				 * the host's silence. */
+				g_flightNetLocalLeaveTimestamp = g_inputTimestamp;
+			}
+		} else if (local->connectedFlag == 1) {
+			g_currentInputFrame.key = KEY_Q;
+		} else {
+			g_currentInputFrame.key = KEY_ABORT_MISSION;
+		}
+	}
+#endif
 	g_currentInputFrame.axisX = (int8_t)((uint8_t)g_ctrlAxisX & 0xfeu);
 	g_currentInputFrame.axisY = (int8_t)((uint8_t)g_ctrlAxisY & 0xfeu);
 	g_currentInputFrame.axisR = (int8_t)((uint8_t)g_ctrlAxisR & 0xfeu);

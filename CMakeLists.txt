@@ -241,6 +241,7 @@ set(XWA_RUNTIME_SOURCES
     src/xwa_runtime/snapshot/snapshot_export.c
     src/xwa_runtime/snapshot/snapshot_flight_map.c
     src/xwa_runtime/snapshot/snapshot_hud.c
+    src/xwa_runtime/snapshot/snapshot_present.c
     src/xwa_runtime/timing/host_clock.c
     src/xwa_runtime/timing/modern_flight_timing.c
 )
@@ -693,6 +694,7 @@ set(XWA_FORMAT_HEADERS
     src/xwa_runtime/snapshot/snapshot.h
     src/xwa_runtime/snapshot/snapshot_flight_map.h
     src/xwa_runtime/snapshot/snapshot_hud.h
+    src/xwa_runtime/snapshot/snapshot_present.h
     src/xwa_runtime/compat/middleware_crt.h
     src/xwa_app/host_config.h
     src/xwa_app/setup.h

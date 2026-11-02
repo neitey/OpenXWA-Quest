@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -132,12 +133,17 @@ func (a *app) restartConnection() {
 	a.adb.run(60*time.Second, "start-server")
 	a.adb.run(30*time.Second, "reconnect", "offline")
 	a.adb.Serial = serial
-	a.reconnectLepton()
+	a.reconnectNet()
 }
 
-// connect is step 3: wait until a headset is connected and allowed, then
+// connect is step 3: ask how to reach the headset (USB cable, USB then
+// Wi-Fi, or Wi-Fi), wait until a headset is connected and allowed, then
 // check that its shell and storage really work.
 func (a *app) connect() error {
+	if a.tunnel != nil {
+		a.tunnel.stop()
+		a.tunnel = nil
+	}
 	a.adb.Serial = ""
 	if _, err := a.adb.run(60*time.Second, "start-server"); err != nil {
 		if err == errClosed {
@@ -145,10 +151,85 @@ func (a *app) connect() error {
 		}
 		say("adb had trouble starting; trying anyway.")
 	}
+	route, err := a.chooseRoute()
+	if err != nil {
+		return err
+	}
+	a.route = route
+	a.lib = nil
+	if route == routeFrame {
+		err := a.frameConnect()
+		if err == errBackToUSB {
+			return a.connect() // ask the route again
+		}
+		return err
+	}
+	if route == routeWiFi {
+		err := a.wifiFlow()
+		if err == nil {
+			return a.checkDevice()
+		}
+		if err != errBackToUSB {
+			return err
+		}
+		logf("Wi-Fi: back to waiting for USB")
+	}
+	if err := a.waitUSB(); err != nil {
+		if err == errWiFiConnected {
+			return a.checkDevice()
+		}
+		return err
+	}
+	logf("using device %s", a.adb.Serial)
+	if err := a.checkDevice(); err != nil {
+		return err
+	}
+	if a.route == routeUSBWiFi && a.lepton == "" && !isNetSerial(a.adb.Serial) {
+		if err := a.switchToWiFi(); err != nil {
+			if err == errClosed {
+				return err
+			}
+			logf("switch to Wi-Fi failed: %v", err)
+			say("%v", err)
+		}
+	}
+	return nil
+}
+
+// errWiFiConnected: while waiting for USB, the user connected over Wi-Fi.
+var errWiFiConnected = errors.New("connected over Wi-Fi")
+
+// usbWaitOffer is the button card shown while waiting for USB.
+func usbWaitOffer(state string, stuck bool) Question {
+	wifi := Option{ID: "wifi", Label: "Use Wi-Fi instead"}
+	if !stuck {
+		return Question{
+			Kind:    "buttons",
+			Title:   "No USB connection?",
+			Text:    "Steam Frame: Wi-Fi is recommended (its USB connection may not show up on\nWindows).",
+			Options: []Option{wifi},
+		}
+	}
+	return Question{
+		Kind:  "buttons",
+		Title: "Still not connected",
+		Text:  "The headset has been \"" + state + "\" for a while. Restarting the connection often helps.",
+		Options: []Option{
+			{ID: "restart", Label: "Restart connection", Style: "primary"},
+			{ID: "again", Label: "Try again"},
+			wifi,
+		},
+	}
+}
+
+// waitUSB waits until one USB headset is ready and sets a.adb.Serial. A
+// "Use Wi-Fi instead" button stays available (errWiFiConnected).
+func (a *app) waitUSB() error {
 	lastOut, lastState, lastMsg := "\x00", "", ""
 	stateSince := time.Now()
 	var offer <-chan Answer
-	offered, autoReconnected := false, false
+	offeredStuck, autoReconnected := false, false
+	offerShown := false
 	failures := 0
 	defer ui.ClearOffer()
 	for {
@@ -180,69 +261,92 @@ func (a *app) connect() error {
 				ready = append(ready, d)
 			}
 		}
+		if len(ready) > 1 {
+			// Wi-Fi entries left from earlier runs do not count while a
+			// USB headset is there.
+			if usb := usbOnly(ready); len(usb) > 0 && len(usb) < len(ready) {
+				logf("ignoring network devices while waiting for USB: %v", ready)
+				ready = usb
+			}
+		}
 		if len(ready) == 1 {
 			a.adb.Serial = ready[0].serial
-			break
+			return nil
 		}
 		if len(ready) > 1 {
 			ui.ClearOffer()
 			if s := a.pickAndroid(ready); s != "" {
 				a.adb.Serial = s
-				break
+				return nil
 			}
 			a.adb.Serial = a.chooseDevice(ready)
 			if a.adb.Serial == "" {
 				return errClosed
 			}
-			break
+			return nil
 		}
 
 		state := waitState(devs)
 		if state != lastState {
 			lastState, stateSince = state, time.Now()
-			if offered {
+			if offeredStuck {
 				ui.ClearOffer()
-				offer, offered = nil, false
+				offer, offeredStuck, offerShown = nil, false, false
 			}
 		}
 		if msg := waitMessage(state); msg != lastMsg {
 			say("%s", msg)
 			lastMsg = msg
 		}
-		if stuckStates[state] && !offered && time.Since(stateSince) > 20*time.Second {
-			offered = true
-			offer = ui.Offer(Question{
-				Kind:  "buttons",
-				Title: "Still not connected",
-				Text:  "The headset has been \"" + state + "\" for a while. Restarting the connection often helps.",
-				Options: []Option{
-					{ID: "restart", Label: "Restart connection", Style: "primary"},
-					{ID: "again", Label: "Try again"},
-				},
-			})
+		stuck := stuckStates[state] && time.Since(stateSince) > 20*time.Second
+		if stuck && !offeredStuck {
+			offeredStuck, offerShown = true, true
+			offer = ui.Offer(usbWaitOffer(state, true))
 			if offer == nil && state == "offline" && !autoReconnected {
 				// Console: try once by itself.
 				autoReconnected = true
 				say("Trying to reconnect...")
 				a.adb.run(30*time.Second, "reconnect", "offline")
 			}
+		} else if !offerShown {
+			offerShown = true
+			offer = ui.Offer(usbWaitOffer(state, false))
 		}
 		select {
 		case ans := <-offer:
-			offer, offered = nil, false
+			offer, offeredStuck, offerShown = nil, false, false
 			ui.ClearOffer()
 			stateSince = time.Now()
 			lastMsg = ""
-			if ans.ID == "restart" {
+			switch ans.ID {
+			case "restart":
 				a.restartConnection()
+			case "wifi":
+				logf("waiting for USB: the user chose Wi-Fi")
+				err := a.wifiFlow()
+				if err == nil {
+					return errWiFiConnected
+				}
+				if err != errBackToUSB {
+					return err
+				}
 			}
 		case <-time.After(2 * time.Second):
 		case <-appCtx.Done():
 			return errClosed
 		}
 	}
-	logf("using device %s", a.adb.Serial)
-	return a.checkDevice()
+}
+
+// usbOnly returns the devices that are not network connections.
+func usbOnly(devs []adbDevice) []adbDevice {
+	var out []adbDevice
+	for _, d := range devs {
+		if !isNetSerial(d.serial) {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // chooseDevice lets the user pick one of several connected devices.
@@ -279,7 +383,7 @@ func shellProblem(out string) string {
 	case strings.Contains(l, "more than one device"):
 		return "More than one device is connected. Unplug the other devices."
 	case strings.Contains(l, "not found"):
-		return "The headset disappeared. Check the USB cable."
+		return "The headset disappeared. Check the USB cable or Wi-Fi connection."
 	}
 	return "The headset does not answer commands yet."
 }
@@ -338,10 +442,17 @@ func (a *app) checkDevice() error {
 	logf("device: serial=%s manufacturer=%q model=%q device=%q sdk=%q release=%q build=%q",
 		a.adb.Serial, manu, model, prop("ro.product.device"), prop("ro.build.version.sdk"),
 		prop("ro.build.version.release"), prop("ro.build.fingerprint"))
+	via := ""
+	if isNetSerial(a.adb.Serial) && a.forwardPort == 0 {
+		via = " over Wi-Fi"
+		if a.tunnel != nil {
+			via = " through SSH"
+		}
+	}
 	if a.lepton != "" {
-		say("Found: Steam Frame (Android layer at %s)", a.lepton)
+		say("Found: Steam Frame (Android layer at %s%s)", a.lepton, via)
 	} else {
-		say("Found: %s", deviceDisplayName(manu, model))
+		say("Found: %s%s", deviceDisplayName(manu, model), via)
 	}
 	a.uid = 0
 	return a.detectStorage()

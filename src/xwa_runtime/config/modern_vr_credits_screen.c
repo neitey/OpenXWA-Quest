@@ -27,7 +27,7 @@ static const CreditLine k_credits[] = {
 	{ CREDIT_NAME, "Neitey" },
 	{ CREDIT_GAP, NULL },
 	{ CREDIT_HEADING, "VR Design, Menu Environments & QA" },
-	{ CREDIT_NAME, "MarkD" },
+	{ CREDIT_NAME, "Bummser" },
 	{ CREDIT_GAP, NULL },
 	{ CREDIT_HEADING, "Radial Menu" },
 	{ CREDIT_TEXT, "Radial menu code borrowed from Team Beef's JK:Academy VR" },

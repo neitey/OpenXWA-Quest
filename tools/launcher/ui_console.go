@@ -86,6 +86,9 @@ func (c *consoleUI) draw(p *Progress, force, final bool) {
 	var s string
 	if p.TotalFiles > 0 {
 		s = fmt.Sprintf("%s: %d of %d files (%s of %s)", p.Label, p.Files, p.TotalFiles, humanSize(p.Bytes), humanSize(p.TotalBytes))
+		if sp := p.Speed(time.Now()); sp != "" {
+			s += ", " + sp
+		}
 	} else {
 		s = p.Label + ": " + p.Summary()
 	}
@@ -112,7 +115,10 @@ func (c *consoleUI) draw(p *Progress, force, final bool) {
 }
 
 // readLine returns one line without the line ending; ok is false at end of input.
-func (c *consoleUI) readLine() (string, bool) {
+func (c *consoleUI) readLine() (string, bool) { return c.readLineSecret(false) }
+
+// readLineSecret is readLine; a secret line is not written to the log.
+func (c *consoleUI) readLineSecret(secret bool) (string, bool) {
 	if c.eof {
 		return "", false
 	}
@@ -125,17 +131,23 @@ func (c *consoleUI) readLine() (string, bool) {
 		}
 	}
 	s = strings.TrimRight(s, "\r\n")
-	logf("INPUT: %q", s)
+	if secret {
+		logf("INPUT: (secret, not logged)")
+	} else {
+		logf("INPUT: %q", s)
+	}
 	return s, true
 }
 
-func (c *consoleUI) prompt(text string) (string, bool) {
+func (c *consoleUI) prompt(text string) (string, bool) { return c.promptSecret(text, false) }
+
+func (c *consoleUI) promptSecret(text string, secret bool) (string, bool) {
 	c.mu.Lock()
 	c.endLine()
 	c.out(text + " ")
 	c.mu.Unlock()
 	logf("ASK: %s", text)
-	line, ok := c.readLine()
+	line, ok := c.readLineSecret(secret)
 	if !ok {
 		c.out("\n")
 	}
@@ -184,7 +196,7 @@ func (c *consoleUI) Ask(q Question) Answer {
 			p = "Folder:"
 		}
 		for {
-			line, ok := c.prompt(p)
+			line, ok := c.promptSecret(p, q.Secret)
 			if !ok {
 				return Answer{ID: q.Default, Text: q.Value, Closed: true}
 			}

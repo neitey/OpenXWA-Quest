@@ -119,7 +119,7 @@ func (a *app) installApp() error {
 			return fail("The headset has a newer version of the app that cannot be replaced by this\nolder one. " +
 				"Download the newest launcher instead.")
 		}
-		return fail("Installing the app failed:\n  %s\nCheck the USB cable and try again.", reason)
+		return fail("Installing the app failed:\n  %s\nCheck the %s and try again.", reason, a.connectionWord())
 	}
 	say("%s %s is installed.", productName, bundled)
 	return nil

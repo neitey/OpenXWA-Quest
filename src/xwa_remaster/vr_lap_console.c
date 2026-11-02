@@ -3339,16 +3339,14 @@ static void vp_draw_tabs(void) {
 	}
 }
 
-/* The IFF colours of the targeting display. */
+/* A contact's colour by IFF: Rebels (IFF 0) green, Imperials (IFF 1) red,
+ * every other IFF (blue, yellow, red, purple teams) blue. IFF 0/1 as the
+ * laser tables use them (OBJ_LaserRebel needs 0, OBJ_LaserImperial 1). */
 static void vp_iff_color(int iff, float out[3]) {
-	static const float k[6][3] = {
-		{ 0.35f, 1.00f, 0.35f }, { 1.00f, 0.30f, 0.25f }, { 0.40f, 0.60f, 1.00f },
-		{ 1.00f, 0.95f, 0.30f }, { 1.00f, 0.30f, 0.25f }, { 0.85f, 0.45f, 1.00f },
-	};
-	const int i = iff >= 0 && iff < 6 ? iff : 2;
-	out[0] = k[i][0];
-	out[1] = k[i][1];
-	out[2] = k[i][2];
+	static const float k_rebel[3] = { 0x3C / 255.0f, 0xDC / 255.0f, 0x50 / 255.0f };    /* #3CDC50 */
+	static const float k_imperial[3] = { 0xF0 / 255.0f, 0x40 / 255.0f, 0x40 / 255.0f }; /* #F04040 */
+	static const float k_neutral[3] = { 0x4C / 255.0f, 0x8C / 255.0f, 0xFF / 255.0f };  /* #4C8CFF */
+	memcpy(out, iff == 0 ? k_rebel : iff == 1 ? k_imperial : k_neutral, sizeof k_rebel);
 }
 
 /* A contact's symbol at (px, py): 0 craft, 1 freighter, 2 capital ship /
@@ -3538,9 +3536,9 @@ static void vp_map_draw(void) {
 			if (f->warhead_target_slot == self->slot && !blink) {
 				continue;
 			}
-			col[0] = kind == 5 ? 1.0f : 0.35f;
-			col[1] = kind == 5 ? 0.25f : 0.55f;
-			col[2] = kind == 5 ? 0.2f : 1.0f;
+			col[0] = 1.0f; /* missile orange, torpedo / bomb yellow */
+			col[1] = kind == 5 ? 0.55f : 0.92f;
+			col[2] = kind == 5 ? 0.1f : 0.2f;
 		}
 		const float a = outside ? 0.45f : 1.0f;
 		float cc[4];
@@ -3594,7 +3592,7 @@ static void vp_map_legend(void) {
 		"You are the arrow in the middle; up is straight ahead.",
 		"The oval is the plane of your wings; rings at 1/3, 2/3, full range.",
 		"A line up or down: the contact is above or below that plane.",
-		"Colours as the targeting box. Brackets: your target.",
+		"Green: Rebel. Red: Imperial. Blue: other. Brackets: your target.",
 		"Faded at the edge: further away than the range.",
 		"A blinking missile or torpedo is aimed at you.",
 		"Touch the map to zoom (2 / 6 / 20 km).",
@@ -3618,11 +3616,11 @@ static void vp_map_legend(void) {
 		const float sx = x + 50.0f + (float)(i % 2) * (w * 0.5f);
 		const float sy = ty + (float)(i / 2) * 40.0f + 10.0f;
 		if (k_syms[i].kind == 5) {
-			vc_pma(c, 1.0f, 0.25f, 0.2f, 1.0f);
+			vc_pma(c, 1.0f, 0.55f, 0.1f, 1.0f);
 		} else if (k_syms[i].kind == 6) {
-			vc_pma(c, 0.35f, 0.55f, 1.0f, 1.0f);
+			vc_pma(c, 1.0f, 0.92f, 0.2f, 1.0f);
 		} else {
-			vc_pma(c, 0.35f, 1.0f, 0.35f, 1.0f);
+			vc_pma(c, 0.88f, 0.97f, 1.0f, 1.0f); /* shapes only; the IFF is the colour */
 		}
 		vp_symbol(k_syms[i].kind, sx, sy, c);
 		vc_text(sx + 34.0f, sy - 11.0f, k_syms[i].text, 19.0f, 0, 0.88f, 0.97f, 1.0f, 1.0f);
