@@ -35,7 +35,7 @@ environment.
 - Fully customizable button mappings.
 - Voice commands, recognised on the headset: double-tap a thumb rest and
   say e.g. "attack my target"
--Immersive 3D menu environments - re-creating the iconic box arts of X-wing games in full 3D.
+- Immersive 3D menu environments - re-creating the iconic box arts of X-wing games in full 3D.
 - Motion controllers: flight stick and throttle lever in the cockpit, or the
   thumbsticks.
 - Laser pointer for every menu, and a virtual keyboard for pilot names.
