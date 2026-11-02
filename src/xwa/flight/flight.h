@@ -376,6 +376,10 @@ extern int g_serverTickTime;
 extern int g_flightNetClockAdjustAccumTicks;
 extern int g_flightNetHostAbortReceived;
 extern int g_flightNetHostTimeoutElapsedMs;
+#ifdef XWA_MODERN
+/* Input time a client confirmed leaving the network game (0: not leaving). */
+extern int g_flightNetLocalLeaveTimestamp;
+#endif
 extern int g_flightNetClockLeadAllowanceMs;
 extern uint16_t g_actionKey;
 extern uint16_t g_currentActionKey;

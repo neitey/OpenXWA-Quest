@@ -8,6 +8,8 @@
  */
 #include "xwa_runtime/net/netplay_screens.h"
 
+#include "aeron/aeron.h"
+
 #include "xwa_runtime/config/modern_options_menu.h"
 #include "xwa_runtime/net/netplay.h"
 #include "xwa_runtime/net/netplay_game.h"
@@ -15,6 +17,7 @@
 #include "xwa/config/game_config.h"
 #include "xwa/frontend/combat_sim_menu.h"
 #include "xwa/frontend/frontend_color.h"
+#include "xwa/frontend/frontend_cursor.h"
 #include "xwa/frontend/frontend_display.h"
 #include "xwa/frontend/frontend_draw.h"
 #include "xwa/frontend/frontend_image.h"
@@ -205,7 +208,9 @@ int XwaNetScreens_JoinGame(int frameCounter) {
 			XwaNet_DetachSession();
 		}
 		NetPlay_DiscoveryStart(0);
-		g_activeTextFieldId = NS_ADDRESS_FIELD_ID;
+		/* In the headset the address field waits for a click: its on-screen
+		 * keyboard would cover the list of games found. */
+		g_activeTextFieldId = Aeron_XrIsPresenting() ? 0 : NS_ADDRESS_FIELD_ID;
 		searchStartMs = SDL_GetTicks();
 		ownAddressesMs = 0;
 	}
@@ -243,7 +248,8 @@ int XwaNetScreens_JoinGame(int frameCounter) {
 	FrontendText_Draw(12, "Host address:", 150, 330, g_colorLightBlue);
 	FrontendDraw_RectAssign(&rect, 250, 328, 490, 344);
 	FrontendDraw_RectOutline(&rect, 0, 0, g_colorPaleBlue);
-	g_frontendEditFieldNoKeyboard = 0;
+	/* The keyboard comes up only while the field is being edited (clicked). */
+	g_frontendEditFieldNoKeyboard = g_activeTextFieldId != NS_ADDRESS_FIELD_ID;
 	fieldEnter =
 		FrontendText_DrawEditableField(&rect, g_gameConfig.ipAddress, 48, NS_ADDRESS_FIELD_ID, 12, NULL);
 	if (strcmp(lastProbe, g_gameConfig.ipAddress) != 0) {
@@ -252,6 +258,24 @@ int XwaNetScreens_JoinGame(int frameCounter) {
 	}
 
 	gameCount = NetPlay_DiscoveryList(games, 6);
+	{
+		/* One row per game: a host can answer on more than one address. */
+		int kept = 0;
+		for (int i = 0; i < gameCount; ++i) {
+			int duplicate = 0;
+			for (int j = 0; j < kept; ++j) {
+				if (games[j].port == games[i].port && strcmp(games[j].hostName, games[i].hostName) == 0 &&
+					strcmp(games[j].gameName, games[i].gameName) == 0) {
+					duplicate = 1;
+					break;
+				}
+			}
+			if (!duplicate) {
+				games[kept++] = games[i];
+			}
+		}
+		gameCount = kept;
+	}
 	XwaModernOptionsMenu_Begin(&menu, 320, 90, &cursorRow, gameCount + 2);
 	XwaModernOptionsMenu_DrawTitle(&menu, "Join a game");
 	menu.y += 6;
@@ -293,10 +317,23 @@ int XwaNetScreens_JoinGame(int frameCounter) {
 				 : !g->open     ? ", in progress"
 								: "",
 				 version, (unsigned)g->pingMs);
-		if (XwaModernOptionsMenu_DrawAction(&menu, line, 71 + i, !usable) && usable && !joinAddress) {
-			snprintf(target, sizeof target, "%s:%u", g->address, (unsigned)g->port);
-			joinAddress = target;
-			joinPort = g->port;
+		{
+			/* The whole row is the button: a laser pointer in the headset
+			 * hits a short line of text poorly. */
+			FrontendRect rowRect;
+			int cursorX;
+			int cursorY;
+			int rowClicked;
+			FrontendDraw_RectAssign(&rowRect, 110, menu.y - 3, 530, menu.y + 17);
+			FrontendCursor_GetPos(&cursorX, &cursorY);
+			rowClicked = FrontendDraw_PointInRect(&rowRect, cursorX, cursorY) && FrontendMouse_GetLeftClick();
+			if ((XwaModernOptionsMenu_DrawAction(&menu, line, 71 + i, !usable) || rowClicked) && usable &&
+				!joinAddress) {
+				snprintf(target, sizeof target, "%s:%u", g->address, (unsigned)g->port);
+				joinAddress = target;
+				joinPort = g->port;
+				g_activeTextFieldId = 0; /* done with the address: the keyboard goes */
+			}
 		}
 	}
 	menu.y = menu.y < 300 ? 300 : menu.y;

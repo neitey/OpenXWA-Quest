@@ -1218,7 +1218,11 @@ static int XwaFlightTask_RunMultiplayerFrameBody(void) {
 		g_xwaMpTiming.packetUs = Aeron_NowUs() - packetStart;
 		g_xwaMpTiming.rolledBack = g_serverTickTime != serverTickBefore;
 	}
-	if (!NetSession_GetLocalPlayerId() && g_flightNetHostTimeoutElapsedMs > 7080) {
+	if (!NetSession_GetLocalPlayerId() &&
+		(g_flightNetHostTimeoutElapsedMs > 7080 ||
+		 (g_flightNetLocalLeaveTimestamp && g_inputTimestamp - g_flightNetLocalLeaveTimestamp > 250))) {
+		/* The host went silent, or this player left the game (a second
+		 * after confirming, for the key to reach the host). */
 		int localPlayer;
 
 		localPlayer = g_localPlayer;
