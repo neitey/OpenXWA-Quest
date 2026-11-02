@@ -1,8 +1,9 @@
 # Neitey's XW: Alliance VR
 
 *Star Wars: X-Wing Alliance* in virtual reality, standalone on Meta Quest 3 /
-3S and Steam Frame & PCVR. Pico is supported but
-experimental.
+3S and Steam Frame & PCVR.
+
+The goal of this project is to archive near-official release quality
 
 Neitey's XW: Alliance VR is based on
 [OpenXWA](https://github.com/elyosh/OpenXWA), the open-source
@@ -25,21 +26,23 @@ environment.
 
 ## Features
 
-- VR cockpits for the playable craft, with the HUD placed per cockpit
-- A touch console on your lap: energy, shields, targeting, wingmen and ship
-  commands at your fingertips
-- Side panel on your right: tactical map, voice commands and the button
-  mapping
-- Radial menu (hold a grip) for wingman orders and other commands
+- 6DoF VR cockpit, with the HUDs adapted for VR.
+- A new virtual touch console: energy, shields, targeting, wingmen and ship
+  commands at your fingertips.
+- Side panel with tactical map, voice commands and the button
+  mapping.
+- Radial menu (hold a grip) for quick-access commands.
+- Fully customizable button mappings.
 - Voice commands, recognised on the headset: double-tap a thumb rest and
   say e.g. "attack my target"
+-Immersive 3D menu environments - re-creating the iconic box arts of X-wing games in full 3D.
 - Motion controllers: flight stick and throttle lever in the cockpit, or the
-  thumbsticks
-- Laser pointer for every menu, and a virtual keyboard for pilot names
-- Immersive 3D menu environments - re-creating the iconic box arts of X-wing games in full 3D.
-- Death menu with Restart Mission and an in-mission Quick Save / Quick Load
-- Pause menu pages for Review Briefing and Mission Hints
-- Your PC pilots can be brought along
+  thumbsticks.
+- Laser pointer for every menu, and a virtual keyboard for pilot names.
+- Death menu with restart mission and an in-mission Quick Save / Quick Load.
+- Fully working local wifi Multiplayer. Quest vs Quest vs Steam Frame.
+- Pause menu pages for Review Briefing and Mission Hints.
+- Your PC pilots can be brought along.
 
 Gameplay video: https://www.reddit.com/r/OculusQuest/s/OZG4dItx3W
 
