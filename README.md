@@ -1,4 +1,4 @@
-# Neitey's XW: Alliance VR
+# Neitey's X-Wing: Alliance VR
 
 *Star Wars: X-Wing Alliance* in virtual reality, standalone on Meta Quest 3 /
 3S and Steam Frame & PCVR.
