@@ -128,9 +128,6 @@ Run the launcher and choose **Collect logs** at the end (or start it with
 `--logs`); it saves the game's log files next to the launcher. Please include
 them with a report.
 
-## What's next?
-
-Multiplayer, new VR environments, Tie-Fighter support.
 
 ## Building
 
